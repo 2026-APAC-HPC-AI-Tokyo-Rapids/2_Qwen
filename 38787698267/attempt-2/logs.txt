@@ -1,0 +1,184 @@
+
+===== 0_inspect.txt =====
+﻿2026-10-15T18:42:21.3674217Z Current runner version: '2.336.0'
+2026-10-15T18:42:21.3681502Z Runner name: 'home-lab-c744315f0816'
+2026-10-15T18:42:21.3682387Z Runner group name: 'default'
+2026-10-15T18:42:21.3683416Z Machine name: 'c744315f0816'
+2026-10-15T18:42:21.3686623Z ##[group]GITHUB_TOKEN Permissions
+2026-10-15T18:42:21.3689439Z Contents: read
+2026-10-15T18:42:21.3690051Z Metadata: read
+2026-10-15T18:42:21.3690630Z ##[endgroup]
+2026-10-15T18:42:21.3692995Z Secret source: Actions
+2026-10-15T18:42:21.3693952Z Cache mode: write
+2026-10-15T18:42:21.3694818Z Prepare workflow directory
+2026-10-15T18:42:21.4151840Z Prepare all required actions
+2026-10-15T18:42:21.4270161Z Complete job name: inspect
+2026-10-15T18:42:21.5324459Z ##[group]Run set -euo pipefail
+2026-10-15T18:42:21.5325441Z [36;1mset -euo pipefail[0m
+2026-10-15T18:42:21.5327177Z [36;1mroot=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/pd-38786485817-1.rANF8zYBSb[0m
+2026-10-15T18:42:21.5330057Z [36;1mif [[ ! -f "${root}/source/provenance.json" ]]; then echo 'Runtime already removed; consult the completed archive'; exit 0; fi[0m
+2026-10-15T18:42:21.5333477Z [36;1mjq -e '.cluster == "aspire2ap" and .commit == "e11bbaa7d33df13a00050dd3cb3c0cac4c57ad9e"' "${root}/source/provenance.json"[0m
+2026-10-15T18:42:21.5335716Z [36;1mdate -u +%FT%TZ[0m
+2026-10-15T18:42:21.5341120Z [36;1mif [[ -s "${root}/logs/pbs-accounting.txt" ]]; then job_id=$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt"); [[ "${job_id}" =~ ^[0-9]+[.][A-Za-z0-9.-]+$ ]]; /opt/pbs/bin/qstat -x -f -F json "${job_id}" | jq '.Jobs | to_entries[] | {job_id: .key, state: .value.job_state, queue: .value.queue, started: .value.stime, hosts: .value.exec_host, used: (.value.resources_used | del(.gpu_usage)), comment: .value.comment, exit_status: .value.Exit_status}'; fi[0m
+2026-10-15T18:42:21.5348108Z [36;1mfor path in "${root}/logs/"*.log; do if [[ -s "${path}" ]]; then printf '\nlog=%s\n' "${path##*/}"; tail -n 12 "${path}" | cut -c 1-1500; fi; done[0m
+2026-10-15T18:42:21.5350784Z [36;1mif [[ -s "${root}/results/score.json" ]]; then cat "${root}/results/score.json"; fi[0m
+2026-10-15T18:42:21.5372992Z shell: /opt/actions-runner-shells/aspire2p-shell --github-shell {0}
+2026-10-15T18:42:21.5374916Z ##[endgroup]
+2026-10-15T18:42:26.1040535Z true
+2026-10-15T18:42:26.1041023Z 2026-10-15T18:42:26Z
+2026-10-15T18:42:26.1321325Z {
+2026-10-15T18:42:26.1321748Z   "job_id": "220539.pbs111",
+2026-10-15T18:42:26.1322182Z   "state": "R",
+2026-10-15T18:42:26.1322538Z   "queue": "aiq2",
+2026-10-15T18:42:26.1322931Z   "started": "Fri Oct 16 02:37:30 2026",
+2026-10-15T18:42:26.1323426Z   "hosts": "a2ap-dgx004/0*112+a2ap-dgx030/0*112",
+2026-10-15T18:42:26.1323936Z   "used": {
+2026-10-15T18:42:26.1324314Z     "cpupercent": 308,
+2026-10-15T18:42:26.1324738Z     "cput": "00:13:46",
+2026-10-15T18:42:26.1325124Z     "mem": "18083724kb",
+2026-10-15T18:42:26.1325519Z     "ncpus": 224,
+2026-10-15T18:42:26.1325892Z     "ngpus": 0,
+2026-10-15T18:42:26.1326362Z     "vmem": "3303055864kb",
+2026-10-15T18:42:26.1327180Z     "walltime": "00:04:07"
+2026-10-15T18:42:26.1327799Z   },
+2026-10-15T18:42:26.1328937Z   "comment": "Job run at Fri Oct 16 at 02:37 on (a2ap-dgx004:ncpus=112:ngpus=8:mem=1971322880kb)+(a2ap-dgx030:ncpus=112:ngpus=8:mem=1971322880kb)",
+2026-10-15T18:42:26.1331509Z   "exit_status": null
+2026-10-15T18:42:26.1332153Z }
+2026-10-15T18:42:26.1356564Z 
+2026-10-15T18:42:26.1356830Z log=decode-0.log
+2026-10-15T18:42:26.1452069Z 
+2026-10-15T18:42:26.1558948Z DeepGEMM warmup:  94%|█████████▍| 15395/16384 [00:05<00:00, 1551.93it/s][A
+2026-10-15T18:42:26.1559552Z 
+2026-10-15T18:42:26.1559950Z DeepGEMM warmup:  95%|█████████▍| 15551/16384 [00:05<00:00, 1534.26it/s][A
+2026-10-15T18:42:26.1560469Z 
+2026-10-15T18:42:26.1560854Z DeepGEMM warmup:  96%|█████████▌| 15705/16384 [00:05<00:00, 1520.58it/s][A
+2026-10-15T18:42:26.1561311Z 
+2026-10-15T18:42:26.1561873Z DeepGEMM warmup:  97%|█████████▋| 15858/16384 [00:06<00:00, 1511.24it/s][A
+2026-10-15T18:42:26.1562437Z 
+2026-10-15T18:42:26.1562821Z DeepGEMM warmup:  98%|█████████▊| 16010/16384 [00:06<00:00, 1502.79it/s][A
+2026-10-15T18:42:26.1563834Z 
+2026-10-15T18:42:26.1564233Z DeepGEMM warmup:  99%|█████████▊| 16161/16384 [00:06<00:00, 1489.95it/s][A
+2026-10-15T18:42:26.1564686Z 
+2026-10-15T18:42:26.1565067Z DeepGEMM warmup: 100%|█████████▉| 16310/16384 [00:06<00:00, 1462.15it/s][A
+2026-10-15T18:42:26.1565925Z DeepGEMM warmup: 100%|██████████| 16384/16384 [00:06<00:00, 2570.97it/s]
+2026-10-15T18:42:26.1568297Z /opt/sglang/venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.lstat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+2026-10-15T18:42:26.1570742Z If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+2026-10-15T18:42:26.1572909Z If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+2026-10-15T18:42:26.1605372Z   torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+2026-10-15T18:42:26.1607929Z [rank0]:[W1016 02:42:23.845059447 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+2026-10-15T18:42:26.1609727Z 
+2026-10-15T18:42:26.1609978Z log=decode-1.log
+2026-10-15T18:42:26.1957161Z [2026-10-16 02:42:10 DP1 TP1 EP1] Capture target verify CUDA graph begin. backend=full, num_tokens_per_req=4, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10], avail mem=8.88 GB
+2026-10-15T18:42:26.1959702Z [2026-10-16 02:42:10 DP2 TP2 EP2] Capture target verify CUDA graph begin. backend=full, num_tokens_per_req=4, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10], avail mem=8.88 GB
+2026-10-15T18:42:26.1962042Z [2026-10-16 02:42:10 DP3 TP3 EP3] Capture target verify CUDA graph begin. backend=full, num_tokens_per_req=4, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10], avail mem=9.11 GB
+2026-10-15T18:42:26.1963386Z 
+2026-10-15T18:42:26.1963676Z   0%|          | 0/9 [00:00<?, ?it/s]
+2026-10-15T18:42:26.1968308Z Capturing batches (bs=10 avail_mem=8.93 GB):   0%|          | 0/9 [00:00<?, ?it/s][2026-10-16 02:42:17 DP0 TP0 EP0] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+2026-10-15T18:42:26.1973567Z [2026-10-16 02:42:17 DP0 TP0 EP0] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=9216, K=4096, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+2026-10-15T18:42:26.1975659Z [2026-10-16 02:42:17 DP0 TP0 EP0] Required memory for warmup: 0.37890625GB, Available memory: 8.923095703125GB
+2026-10-15T18:42:26.1976419Z 
+2026-10-15T18:42:26.1976443Z 
+2026-10-15T18:42:26.1977092Z DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s][A
+2026-10-15T18:42:26.1977679Z 
+2026-10-15T18:42:26.1978119Z DeepGEMM warmup:   0%|          | 1/16384 [00:02<10:33:32,  2.32s/it][A
+2026-10-15T18:42:26.1978645Z 
+2026-10-15T18:42:26.1979054Z DeepGEMM warmup:   0%|          | 17/16384 [00:04<54:36,  4.99it/s]  [A
+2026-10-15T18:42:26.1979571Z 
+2026-10-15T18:42:26.1979997Z DeepGEMM warmup:   0%|          | 65/16384 [00:06<19:57, 13.63it/s][A
+2026-10-15T18:42:26.1980507Z 
+2026-10-15T18:42:26.1980916Z DeepGEMM warmup:   1%|          | 129/16384 [00:07<12:39, 21.41it/s][A
+2026-10-15T18:42:26.1981492Z 
+2026-10-15T18:42:26.1981677Z log=driver.log
+2026-10-15T18:42:26.1982192Z pd_driver_started=2026-10-15T18:37:31Z host=a2ap-dgx004
+2026-10-15T18:42:26.1983293Z 
+2026-10-15T18:42:26.1983497Z log=node-0-environment.log
+2026-10-15T18:42:26.1983987Z hostname=a2ap-dgx004
+2026-10-15T18:42:26.1984429Z node_ip=192.0.2.7
+2026-10-15T18:42:26.1984852Z node_rank=0
+2026-10-15T18:42:26.1985693Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:42:26.1986900Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-483856bd-a57a-9145-7766-446ecf74ea51)
+2026-10-15T18:42:26.1988038Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-fb9e0401-be7e-de19-37ea-2cf68b113d09)
+2026-10-15T18:42:26.1989110Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-6e2e3517-05a2-f29a-0fbf-671c2c770349)
+2026-10-15T18:42:26.1990362Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-db9f2e12-ea10-d0b5-2ec1-d7957835124c)
+2026-10-15T18:42:26.1991432Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-6c60c08c-6607-14d7-5a88-d6626ba0fe16)
+2026-10-15T18:42:26.1992628Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-d498f7bc-ca57-8469-c1ed-dfb0827d0de6)
+2026-10-15T18:42:26.1993625Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c7f72f5e-d4e0-4290-8619-af2d47bc62eb)
+2026-10-15T18:42:26.1994747Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-8669eaa6-45c0-5f64-b43c-3fca1f0ba907)
+2026-10-15T18:42:26.1995366Z 
+2026-10-15T18:42:26.1995611Z log=node-0-model-copy.log
+2026-10-15T18:42:26.3522085Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:42:26.3524767Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:42:26.3526024Z host=a2ap-dgx004
+2026-10-15T18:42:26.3529429Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:42:26.3536276Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147069632 2193450357620      14% /scratch
+2026-10-15T18:42:26.3538771Z /dev/md1                                                                                                                                                                         ext4     29884363448    456428168   27927677796       2% /raid
+2026-10-15T18:42:26.3539948Z copy_start=2026-10-16T02:37:32,086690112+08:00
+2026-10-15T18:42:26.3540577Z copy_seconds=167
+2026-10-15T18:42:26.3541076Z copy_end=2026-10-16T02:40:19,528949298+08:00
+2026-10-15T18:42:26.3541928Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:42:26.3542764Z copy_verified=true
+2026-10-15T18:42:26.3543047Z 
+2026-10-15T18:42:26.3543264Z log=node-1-environment.log
+2026-10-15T18:42:26.3543811Z hostname=a2ap-dgx030
+2026-10-15T18:42:26.3544455Z node_ip=192.0.2.4
+2026-10-15T18:42:26.3545145Z node_rank=1
+2026-10-15T18:42:26.3546156Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:42:26.3547598Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-3262688e-3b06-2f57-aa25-4449f88d6ac9)
+2026-10-15T18:42:26.3548719Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-3712af80-a0de-2012-91ad-ec184cc15a0a)
+2026-10-15T18:42:26.3549837Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-52de63d1-3209-fe76-765f-dc3fa253bcc4)
+2026-10-15T18:42:26.3550968Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-43310372-cbe5-78ce-b3ce-2f3ddbba2696)
+2026-10-15T18:42:26.3552055Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-15d861f3-7719-4481-2f83-8589f314deea)
+2026-10-15T18:42:26.3553152Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-63ad4bd1-5318-43e9-29b5-d993683e79da)
+2026-10-15T18:42:26.3554269Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c69a0c8a-18ed-1732-ebd3-034234f21462)
+2026-10-15T18:42:26.3555410Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-f67cf417-8ebb-4bf0-562e-cef892bd436b)
+2026-10-15T18:42:26.3556088Z 
+2026-10-15T18:42:26.3556340Z log=node-1-model-copy.log
+2026-10-15T18:42:26.3557927Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:42:26.3560122Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:42:26.3561252Z host=a2ap-dgx030
+2026-10-15T18:42:26.3562523Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:42:26.3565440Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147600064 2193449826980      14% /scratch
+2026-10-15T18:42:26.3568716Z /dev/md1                                                                                                                                                                         ext4     29884363448    180277924   28203828040       1% /raid
+2026-10-15T18:42:26.3570064Z copy_start=2026-10-16T02:37:32,157549429+08:00
+2026-10-15T18:42:26.3570822Z copy_seconds=168
+2026-10-15T18:42:26.3571388Z copy_end=2026-10-16T02:40:20,173644709+08:00
+2026-10-15T18:42:26.3572307Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:42:26.3573204Z copy_verified=true
+2026-10-15T18:42:26.3573511Z 
+2026-10-15T18:42:26.3573737Z log=prefill-0.log
+2026-10-15T18:42:26.3575565Z [2026-10-16 02:42:22 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.41
+2026-10-15T18:42:26.3578527Z [2026-10-16 02:42:22 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.41
+2026-10-15T18:42:26.3582135Z [2026-10-16 02:42:22 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.41
+2026-10-15T18:42:26.3583981Z [2026-10-16 02:42:22] INFO:     127.0.0.1:38752 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3584749Z [2026-10-16 02:42:22] INFO:     127.0.0.1:38776 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3585507Z [2026-10-16 02:42:22] INFO:     127.0.0.1:38766 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3586459Z [2026-10-16 02:42:22] INFO:     127.0.0.1:38742 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3587714Z [2026-10-16 02:42:22] Disaggregation warmup requests completed for all 4 DP ranks
+2026-10-15T18:42:26.3588711Z [2026-10-16 02:42:22] End of disaggregation warmup
+2026-10-15T18:42:26.3589561Z [2026-10-16 02:42:22] The server is fired up and ready to roll!
+2026-10-15T18:42:26.3591578Z [2026-10-16 02:42:23 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 68.88
+2026-10-15T18:42:26.3593394Z [2026-10-16 02:42:24] INFO:     192.0.2.6:36728 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3593891Z 
+2026-10-15T18:42:26.3594118Z log=prefill-1.log
+2026-10-15T18:42:26.3836858Z [2026-10-16 02:42:22 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.48
+2026-10-15T18:42:26.3841381Z [2026-10-16 02:42:22 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.48
+2026-10-15T18:42:26.3846297Z [2026-10-16 02:42:22 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.48
+2026-10-15T18:42:26.3849818Z [2026-10-16 02:42:22] INFO:     127.0.0.1:46812 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3851377Z [2026-10-16 02:42:22] INFO:     127.0.0.1:46802 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3854192Z [2026-10-16 02:42:22] INFO:     127.0.0.1:46780 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3855509Z [2026-10-16 02:42:23] INFO:     127.0.0.1:46794 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:42:26.3856598Z [2026-10-16 02:42:23] Disaggregation warmup requests completed for all 4 DP ranks
+2026-10-15T18:42:26.3857610Z [2026-10-16 02:42:23] End of disaggregation warmup
+2026-10-15T18:42:26.3858244Z [2026-10-16 02:42:23] The server is fired up and ready to roll!
+2026-10-15T18:42:26.3860032Z [2026-10-16 02:42:24 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 33.16
+2026-10-15T18:42:26.3861828Z [2026-10-16 02:42:25] INFO:     192.0.2.6:37430 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:42:28.4766213Z Cleaning up orphan processes
+
+===== inspect/system.txt =====
+2026-10-15T18:42:17.1280000Z Evaluating inspect.if
+2026-10-15T18:42:17.1280000Z Evaluating: success()
+2026-10-15T18:42:17.1280000Z Result: true
+2026-10-15T18:42:17.1280000Z Requested labels: self-hosted, home-lab
+2026-10-15T18:42:17.1280000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire-run-status.yml@refs/heads/perf/aspire-megamoe-port
+2026-10-15T18:42:17.1280000Z Waiting for a runner to pick up this job...
+2026-10-15T18:42:17.4710000Z Job is about to start running on the runner: home-lab-c744315f0816

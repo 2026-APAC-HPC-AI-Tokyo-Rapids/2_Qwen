@@ -1,0 +1,887 @@
+
+===== 2_ASPIRE 2A+ _ OCIコンテナをビルド.txt =====
+﻿2026-08-21T05:41:45.5027302Z Current runner version: '2.336.0'
+2026-08-21T05:41:45.5039903Z Runner name: 'a2ap-login01-3'
+2026-08-21T05:41:45.5040714Z Runner group name: 'default'
+2026-08-21T05:41:45.5041701Z Machine name: 'a2ap-login01'
+2026-08-21T05:41:45.5046651Z ##[group]GITHUB_TOKEN Permissions
+2026-08-21T05:41:45.5049241Z Actions: read
+2026-08-21T05:41:45.5049912Z Contents: read
+2026-08-21T05:41:45.5050495Z Metadata: read
+2026-08-21T05:41:45.5051076Z ##[endgroup]
+2026-08-21T05:41:45.5053368Z Secret source: Actions
+2026-08-21T05:41:45.5054740Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTP requests.
+2026-08-21T05:41:45.5056009Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTPS requests.
+2026-08-21T05:41:45.5057003Z Prepare workflow directory
+2026-08-21T05:41:45.5680452Z Prepare all required actions
+2026-08-21T05:41:45.5729051Z Getting action download info
+2026-08-21T05:41:46.6064915Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-21T05:41:47.6304626Z Download action repository 'actions/upload-artifact@v7' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-08-21T05:41:49.9472500Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:49.9476669Z ##[group] Inputs
+2026-08-21T05:41:49.9477648Z   node_count: 1
+2026-08-21T05:41:49.9478356Z   profile: false
+2026-08-21T05:41:49.9478825Z   require_build: true
+2026-08-21T05:41:49.9479253Z ##[endgroup]
+2026-08-21T05:41:49.9479702Z Complete job name: ASPIRE 2A+ / OCIコンテナをビルド
+2026-08-21T05:41:50.2002826Z ##[group]Run actions/checkout@v7
+2026-08-21T05:41:50.2003593Z with:
+2026-08-21T05:41:50.2003961Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:50.2006635Z   token: ***
+2026-08-21T05:41:50.2006934Z   ssh-strict: true
+2026-08-21T05:41:50.2007311Z   ssh-user: git
+2026-08-21T05:41:50.2007635Z   persist-credentials: true
+2026-08-21T05:41:50.2007955Z   clean: true
+2026-08-21T05:41:50.2008292Z   sparse-checkout-cone-mode: true
+2026-08-21T05:41:50.2008636Z   fetch-depth: 1
+2026-08-21T05:41:50.2008976Z   fetch-tags: false
+2026-08-21T05:41:50.2009275Z   show-progress: true
+2026-08-21T05:41:50.2009577Z   lfs: false
+2026-08-21T05:41:50.2009855Z   submodules: false
+2026-08-21T05:41:50.2010156Z   set-safe-directory: true
+2026-08-21T05:41:50.2010497Z   allow-unsafe-pr-checkout: false
+2026-08-21T05:41:50.2011034Z env:
+2026-08-21T05:41:50.2011468Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:41:50.2012081Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:41:50.2012694Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:41:50.2013309Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:41:50.2013815Z   BUILD_DIR: /dev/shm/qwen-sglang-container/run-32451446703-1
+2026-08-21T05:41:50.2014214Z ##[endgroup]
+2026-08-21T05:41:51.1826511Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:51.1831517Z ##[group]Getting Git version info
+2026-08-21T05:41:51.1834158Z Working directory is '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen'
+2026-08-21T05:41:51.1837285Z [command]/usr/bin/git version
+2026-08-21T05:41:51.1838398Z git version 2.34.1
+2026-08-21T05:41:51.1852725Z ##[endgroup]
+2026-08-21T05:41:51.1873378Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-21T05:41:51.1918716Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/509017aa-2b0b-43f7-bee3-2fa20749a09f' before making global git config changes
+2026-08-21T05:41:51.1922165Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:41:51.1931022Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen
+2026-08-21T05:41:51.2024194Z Deleting the contents of '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen'
+2026-08-21T05:41:51.2044817Z ##[group]Determining repository object format
+2026-08-21T05:41:51.2047768Z ##[endgroup]
+2026-08-21T05:41:51.2049448Z ##[group]Initializing the repository
+2026-08-21T05:41:51.2055521Z [command]/usr/bin/git init /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen
+2026-08-21T05:41:51.2246398Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-21T05:41:51.2248616Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-21T05:41:51.2250618Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-21T05:41:51.2252057Z hint: 
+2026-08-21T05:41:51.2253334Z hint: 	git config --global init.defaultBranch <name>
+2026-08-21T05:41:51.2254618Z hint: 
+2026-08-21T05:41:51.2255932Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-21T05:41:51.2258214Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-21T05:41:51.2259712Z hint: 
+2026-08-21T05:41:51.2260664Z hint: 	git branch -m <name>
+2026-08-21T05:41:51.2353791Z Initialized empty Git repository in /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git/
+2026-08-21T05:41:51.2376557Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:51.2491021Z ##[endgroup]
+2026-08-21T05:41:51.2492713Z ##[group]Disabling automatic garbage collection
+2026-08-21T05:41:51.2497559Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-21T05:41:51.2578505Z ##[endgroup]
+2026-08-21T05:41:51.2580069Z ##[group]Setting up auth
+2026-08-21T05:41:51.2581299Z Removing SSH command configuration
+2026-08-21T05:41:51.2594562Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:41:51.2674539Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:41:51.3178421Z Removing HTTP extra header
+2026-08-21T05:41:51.3183453Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:41:51.3236431Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:41:51.3679241Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:41:51.3685108Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:41:51.3734258Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:41:51.4168353Z [command]/usr/bin/git config --file /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-21T05:41:51.4252965Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:41:51.4337848Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:41:51.4408001Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:41:51.4472116Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:41:51.4536947Z ##[endgroup]
+2026-08-21T05:41:51.4539016Z ##[group]Fetching the repository
+2026-08-21T05:41:51.4546606Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ab1f8862a5bdb7f6abef69ee629d255e8d9ca616:refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:52.1761708Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:52.1764352Z  * [new ref]         ab1f8862a5bdb7f6abef69ee629d255e8d9ca616 -> origin/issue-7-oci-enroot
+2026-08-21T05:41:52.1897397Z [command]/usr/bin/git branch --list --remote origin/issue-7-oci-enroot
+2026-08-21T05:41:52.1993389Z   origin/issue-7-oci-enroot
+2026-08-21T05:41:52.2000255Z [command]/usr/bin/git rev-parse refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:52.2049465Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:52.2053182Z ##[endgroup]
+2026-08-21T05:41:52.2054912Z ##[group]Determining the checkout info
+2026-08-21T05:41:52.2056770Z ##[endgroup]
+2026-08-21T05:41:52.2058237Z [command]/usr/bin/git sparse-checkout disable
+2026-08-21T05:41:52.2172149Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-21T05:41:52.2248689Z ##[group]Checking out the ref
+2026-08-21T05:41:52.2251275Z [command]/usr/bin/git checkout --progress --force -B issue-7-oci-enroot refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:52.3285957Z Switched to a new branch 'issue-7-oci-enroot'
+2026-08-21T05:41:52.3300574Z Branch 'issue-7-oci-enroot' set up to track remote branch 'issue-7-oci-enroot' from 'origin'.
+2026-08-21T05:41:52.3313206Z ##[endgroup]
+2026-08-21T05:41:52.3455298Z [command]/usr/bin/git log -1 --format=%H
+2026-08-21T05:41:52.3538825Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:52.4443250Z ##[group]Run "${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"
+2026-08-21T05:41:52.4446160Z [36;1m"${GITHUB_WORKSPACE}/scripts/build-sglang-container.sh"[0m
+2026-08-21T05:41:52.4510101Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-21T05:41:52.4512431Z env:
+2026-08-21T05:41:52.4514436Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:41:52.4517337Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:41:52.4519815Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:41:52.4522828Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:41:52.4524938Z   BUILD_DIR: /dev/shm/qwen-sglang-container/run-32451446703-1
+2026-08-21T05:41:52.4535261Z   GH_TOKEN: ***
+2026-08-21T05:41:52.4536654Z ##[endgroup]
+2026-08-21T05:41:52.5646038Z Cloning into '/dev/shm/qwen-sglang-container/run-32451446703-1/sglang-source'...
+2026-08-21T05:41:52.7108115Z done.
+2026-08-21T05:41:55.0026250Z HEAD is now at 7ec0eb3d7 Add locked SGLang Python environment
+2026-08-21T05:41:55.0028191Z Your branch is up to date with 'origin/main'.
+2026-08-21T05:41:59.1768190Z STEP 1/28: FROM docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f
+2026-08-21T05:42:00.1789901Z STEP 2/28: LABEL org.opencontainers.image.title="Source-built SGLang runtime"
+2026-08-21T05:42:00.1880342Z --> Using cache 446723ebebcdf5e6afb2f905f993db5997a0338a969374578b1ba5da83d7c971
+2026-08-21T05:42:00.1881247Z --> 446723ebebcd
+2026-08-21T05:42:00.8797262Z STEP 3/28: LABEL org.opencontainers.image.description="SGLang main built with uv for rootless OCI and Enroot execution"
+2026-08-21T05:42:00.8801556Z --> Using cache e59140ca14e4c401d8b1a889d051e593f8d6632da09fe5578d2e653f9cf32d0b
+2026-08-21T05:42:00.8804185Z --> e59140ca14e4
+2026-08-21T05:42:01.6548196Z STEP 4/28: LABEL org.opencontainers.image.source="https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src"
+2026-08-21T05:42:01.6560413Z --> Using cache feea8993300dfe64f0e27bd8d613be23e5b6e99f8a4d7fe8ba1350f9717d9b83
+2026-08-21T05:42:01.6563386Z --> feea8993300d
+2026-08-21T05:42:02.5077115Z STEP 5/28: LABEL ai.sglang.nccl-tests-source="https://github.com/NVIDIA/nccl-tests"
+2026-08-21T05:42:02.5080157Z --> Using cache cd93f4ddc517c9b3b991672c65acadb948adbfbb03c7c4418d8cfba5d33c654c
+2026-08-21T05:42:02.5081906Z --> cd93f4ddc517
+2026-08-21T05:42:03.3467601Z STEP 6/28: LABEL ai.sglang.nccl-tests-ref="717b68318278e93f371d8ffb46b076069d7c7851"
+2026-08-21T05:42:03.3482341Z --> Using cache 94735105da25e14fe6ecad4866ecac40fd61224926b925d1efde53563398a788
+2026-08-21T05:42:03.3486935Z --> 94735105da25
+2026-08-21T05:42:04.3522159Z STEP 7/28: LABEL ai.sglang.deepep-commit="9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+2026-08-21T05:42:04.3527904Z --> Using cache 45eb65cd1e98fb25e1803d22522deb167079ff60120b4a7b26aa96b25f34f40b
+2026-08-21T05:42:04.3530906Z --> 45eb65cd1e98
+2026-08-21T05:42:05.3895908Z STEP 8/28: LABEL ai.sglang.mooncake-version="0.3.11.post1"
+2026-08-21T05:42:05.3900148Z --> Using cache 1f647332468c32959c4951522ddf7e84cad6a341c1127c8f07b728817c2fd0e5
+2026-08-21T05:42:05.3901831Z --> 1f647332468c
+2026-08-21T05:42:06.1758949Z STEP 9/28: LABEL ai.sglang.mscclpp-version="sglang-v0.9.1"
+2026-08-21T05:42:06.1771806Z --> Using cache 170d8f4bb17e50b72c97ae453fd58f52db5e7851d7909e0bc320fbf045060c20
+2026-08-21T05:42:06.1775098Z --> 170d8f4bb17e
+2026-08-21T05:42:07.3629254Z STEP 10/28: COPY containers/install-system-toolchain.sh /opt/apac/install-system-toolchain.sh
+2026-08-21T05:42:07.5989595Z --> Using cache 2e11dc785e4651358fc4e4dea3407ead0f1627c0608268e1a915d27fbd4d5bef
+2026-08-21T05:42:07.5991464Z --> 2e11dc785e46
+2026-08-21T05:42:08.6704435Z STEP 11/28: RUN /opt/apac/install-system-toolchain.sh && rm /opt/apac/install-system-toolchain.sh
+2026-08-21T05:42:08.6716298Z --> Using cache 42e8b9a4241cc763753da03f1282718600b9601003cc6ad193b9e2b767b4aa98
+2026-08-21T05:42:08.6718043Z --> 42e8b9a4241c
+2026-08-21T05:42:11.8887811Z STEP 12/28: COPY containers/build-nccl-tests.sh /opt/apac/build-nccl-tests.sh
+2026-08-21T05:42:12.0976298Z --> Using cache 09516be7ce1ef49f87b5426f08ce55b6aeef6f8c190461f2b5f9d8bb8af33939
+2026-08-21T05:42:12.0977314Z --> 09516be7ce1e
+2026-08-21T05:42:16.1486224Z STEP 13/28: RUN /opt/apac/build-nccl-tests.sh && rm /opt/apac/build-nccl-tests.sh
+2026-08-21T05:42:16.1502138Z --> Using cache cd7b6ec9810f2a1d2d6247c42b35524a1108f1bdc8abf9802759d26b32591cb5
+2026-08-21T05:42:16.1504031Z --> cd7b6ec9810f
+2026-08-21T05:42:19.3143990Z STEP 14/28: COPY sglang-project-metadata /opt/sglang-project-metadata
+2026-08-21T05:42:19.5222904Z --> Using cache a171d622832bd89582fdbb6d2c2c9a4ee19b4f0b07f1684ade342431a03518cd
+2026-08-21T05:42:19.5225636Z --> a171d622832b
+2026-08-21T05:42:22.8546134Z STEP 15/28: COPY containers/install-python-dependencies.sh /opt/apac/install-python-dependencies.sh
+2026-08-21T05:42:23.0569899Z --> Using cache 4f1e37a4ff60b6631cf3abcb7422f23470cdb26379b39f9ec5f987b5c4eb379e
+2026-08-21T05:42:23.0570556Z --> 4f1e37a4ff60
+2026-08-21T05:42:26.3915053Z STEP 16/28: RUN /opt/apac/install-python-dependencies.sh && rm /opt/apac/install-python-dependencies.sh
+2026-08-21T05:42:26.3930682Z --> Using cache cdb5a6832b4f6525085757b3a8826e6bcdfabc1120f38ceaed21f9b44f601872
+2026-08-21T05:42:26.3932387Z --> cdb5a6832b4f
+2026-08-21T05:42:36.1658442Z STEP 17/28: COPY containers/install-accelerator-dependencies.sh /opt/apac/install-accelerator-dependencies.sh
+2026-08-21T05:42:36.3744450Z --> Using cache 35258af657412d46df575380ab1f8026907a2e4ae99cb9c505f04474665d354b
+2026-08-21T05:42:36.3746540Z --> 35258af65741
+2026-08-21T05:42:47.6286722Z STEP 18/28: RUN /opt/apac/install-accelerator-dependencies.sh && rm /opt/apac/install-accelerator-dependencies.sh
+2026-08-21T05:42:47.6301248Z --> Using cache 270aa82e99a5384a21edb98b5eb5080223357e1bd6e28fa7b9bc07789184f650
+2026-08-21T05:42:47.6304593Z --> 270aa82e99a5
+2026-08-21T05:43:00.0046959Z STEP 19/28: COPY patches/sglang /opt/sglang-patches
+2026-08-21T05:43:00.2231691Z --> Using cache 20eb1a321bb8f92e3b10b4bc917741a5706ce1a4ebc8652d271f7897a6894a42
+2026-08-21T05:43:00.2234491Z --> 20eb1a321bb8
+2026-08-21T05:43:11.7888131Z STEP 20/28: COPY sglang-source /opt/sglang/source
+2026-08-21T05:43:13.8117980Z --> Using cache 05b9b7dc8e56b7b1a9a534e21a75f545e90d80633d1499d441793ae0c0df9c1f
+2026-08-21T05:43:13.8119663Z --> 05b9b7dc8e56
+2026-08-21T05:43:26.5783258Z STEP 21/28: COPY sglang-commit.txt /opt/sglang/sglang-commit.txt
+2026-08-21T05:43:26.8137779Z --> Using cache 1de9b939e7cd2c501fdf9597664adac29a5118c52a7edefe5622452ed48adf68
+2026-08-21T05:43:26.8141027Z --> 1de9b939e7cd
+2026-08-21T05:43:38.0557425Z STEP 22/28: COPY containers/install-sglang-source.sh /opt/apac/install-sglang-source.sh
+2026-08-21T05:43:38.2601467Z --> Using cache a2ec03318e6cdcbdf9f12151d555d3554a3c34ca7ea2c49ae50615ada67e77a9
+2026-08-21T05:43:38.2605475Z --> a2ec03318e6c
+2026-08-21T05:43:49.1994080Z STEP 23/28: RUN /opt/apac/install-sglang-source.sh && rm /opt/apac/install-sglang-source.sh
+2026-08-21T05:43:49.2038616Z --> Using cache 496a243defab0f326fd0efab7dbc3c9a79b0349260935167287e1373ae874b22
+2026-08-21T05:43:49.2042389Z --> 496a243defab
+2026-08-21T05:44:00.4543811Z STEP 24/28: COPY apac-manifest.json /opt/apac/manifest.json
+2026-08-21T05:44:16.0071094Z --> af1a3b91230c
+2026-08-21T05:44:25.3027111Z STEP 25/28: ENV CUDA_HOME=/usr/local/cuda
+2026-08-21T05:44:25.3742754Z --> 827e1f991130
+2026-08-21T05:44:37.1809675Z STEP 26/28: ENV PATH=/opt/sglang/venv/bin:/opt/nccl-tests/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+2026-08-21T05:44:37.2447321Z --> db63de190ead
+2026-08-21T05:44:48.5615113Z STEP 27/28: ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+2026-08-21T05:44:48.5982905Z --> 73ce5a7e492e
+2026-08-21T05:45:00.1490383Z STEP 28/28: ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+2026-08-21T05:45:00.1495935Z COMMIT localhost/apac-qwen-sglang:ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:45:00.2003169Z --> 279fa71f7d9d
+2026-08-21T05:45:00.2005014Z Successfully tagged localhost/apac-qwen-sglang:ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:46:05.8884778Z 279fa71f7d9d9b14e1d4578be57a630d0c449ed40d4da40212987f8568f23c38
+2026-08-21T05:46:24.7922836Z /opt/sglang/venv/lib/python3.12/site-packages/torchao/quantization/quant_api.py:1731: SyntaxWarning: invalid escape sequence '\.'
+2026-08-21T05:46:24.7926250Z   """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+2026-08-21T05:46:28.0492619Z /opt/sglang/source/python/sglang/__init__.py
+2026-08-21T05:46:28.0493746Z 2.11.0+cu130
+2026-08-21T05:46:35.9824777Z {'flashinfer-python': '0.6.15.post1', 'flashinfer-cubin': '0.6.15.post1', 'flashinfer-jit-cache': '0.6.15.post1'}
+2026-08-21T05:46:36.0514558Z {'deep-ep': '1.2.1', 'mooncake-transfer-engine-cuda13': '0.3.11.post1', 'mscclpp': '0.9.1', 'nixl': '1.4.0', 'nixl-cu13': '1.4.0'}
+2026-08-21T05:46:36.0722239Z mpirun (Open MPI) 4.1.6
+2026-08-21T05:46:36.0722982Z 
+2026-08-21T05:46:36.0723705Z Report bugs to http://www.open-mpi.org/community/help/
+2026-08-21T05:46:36.1632911Z # Library version: 1.16.0
+2026-08-21T05:46:36.1633420Z # Library path: /lib/x86_64-linux-gnu/libucs.so.0
+2026-08-21T05:46:36.1633883Z # API headers version: 1.16.0
+2026-08-21T05:46:36.1634281Z # Git branch '<unknown>', revision 0000000
+2026-08-21T05:46:36.1636805Z # Configured with: --build=x86_64-linux-gnu --prefix=/usr --includedir=${prefix}/include --mandir=${prefix}/share/man --infodir=${prefix}/share/info --sysconfdir=/etc --localstatedir=/var --disable-option-checking --disable-silent-rules --libdir=${prefix}/lib/x86_64-linux-gnu --runstatedir=/run --disable-maintainer-mode --disable-dependency-tracking --enable-mt --with-verbs --with-go=no --with-mad=yes --enable-backtrace-detail --enable-logging --enable-devel-headers --enable-examples --enable-cma --enable-lcov --enable-profiling --enable-rc --enable-dc --enable-ud --with-mlx5-dv --enable-dm
+2026-08-21T05:46:36.1891524Z uv 0.12.5 (x86_64-unknown-linux-gnu)
+2026-08-21T05:46:36.3147511Z Getting image source signatures
+2026-08-21T05:46:36.3155429Z Copying blob sha256:6e7fca69a642c3dfa6e52b07f4bb96c93c57dcf7e2ee4dd5d96682b1aaa9398c
+2026-08-21T05:46:36.3158360Z Copying blob sha256:d6429da8e0adab7358ff80766fcc14c2f158a5ec45fe223bbe597070ba891ff4
+2026-08-21T05:46:36.3161188Z Copying blob sha256:b800df4a565ef7287963fe8ee2de71a600389b25eba88ef56c15482209449e39
+2026-08-21T05:46:36.3163709Z Copying blob sha256:66d3d8a459d5610ab77c9e2541f7de7c977629fc89134ce000e29922c8326924
+2026-08-21T05:46:36.3166197Z Copying blob sha256:495bbaf4cc5ca53d8286fe305d2fc2fd3ecb2c8791cfdd4473e984d2eb0f3ea1
+2026-08-21T05:46:36.3168858Z Copying blob sha256:9d592720ced4a7a4ddf16adef8a126e4c8c49f22114de769343320b37674321e
+2026-08-21T05:46:36.3471226Z Copying blob sha256:bac4e3e37f04e8ed0ddf3539d8b9442e0b9571aba2efea5040ced367b820112b
+2026-08-21T05:46:36.3719894Z Copying blob sha256:4076b08c958d231f75437340dbfbb24d0f393fe79369c3ce2256f89bce8d5b57
+2026-08-21T05:46:46.7301848Z Copying blob sha256:cb4f3baf13cf2bd475654f1bbba2001cfb3ffe2ca7c3d5200602cb1250299342
+2026-08-21T05:46:46.7989977Z Copying blob sha256:16adf212c88e344ae0510016f125c8040cdb7a369a9f0ab2ad0f41320e8555f9
+2026-08-21T05:46:46.7996566Z Copying blob sha256:6265f25f914da0c2494e93c738a8a0decef66efdf86d426aa7ee499c1f8c0f1d
+2026-08-21T05:46:46.8451650Z Copying blob sha256:8720459fd8dacd4db6f35ae69460cd012a8eb661b9f6711cbfbc9403bae01cab
+2026-08-21T05:46:47.5292331Z Copying blob sha256:efdb0e77e4b988364d72d64f84644de689f654e9fab1079b6375ec6f7a67abb3
+2026-08-21T05:46:47.9837632Z Copying blob sha256:4ab764804632641e610019422901f750afcfc12da67840a5857b96fc0488d310
+2026-08-21T05:46:52.0542925Z Copying blob sha256:4224deb0d65ef89e3c3b3be3f2cc824ce12b12905ed468274ad420ffca0ce63f
+2026-08-21T05:47:01.0454026Z Copying blob sha256:1ba9b09e4b7b6dacc1e7a89d8a6c1e4facf1cc9c6aa2d02518f98d1f7232ebc3
+2026-08-21T05:47:02.2960761Z Copying blob sha256:faa78fc8f92572eb2a856119f8fbd782cc414faefe28486677dd8cdcd9ef6afb
+2026-08-21T05:47:04.6021430Z Copying blob sha256:6fde6df75b3881d8c3f2d45b84f27a20ad4ce0865f2a2c9f83de4b03a9b9309a
+2026-08-21T05:47:21.3551336Z Copying blob sha256:6c075f7fdf3cd011727dfb08eeaede4d85b002a179e454c58e66854a9a1eb3f4
+2026-08-21T05:47:26.5250197Z Copying blob sha256:ed92e075defac6e18ebd3e272537d82d0c40c271f6357b11d70a4fc0a7a47ba4
+2026-08-21T05:47:26.5368380Z Copying blob sha256:f8860c262d6ea735c8d5969c7a203f1dd21591dc768a86c1cf6005848f63b9ca
+2026-08-21T05:47:26.5636459Z Copying blob sha256:f4f6b6a4144cec7e4313d5d7090d7c272933d5acf5368d0570eac8338414acbc
+2026-08-21T05:47:27.2054508Z Copying blob sha256:2341e0f27dfe42e014564df2f4706c10e90b8e6d2f6b63bf93f8bd207d590776
+2026-08-21T05:47:41.4054076Z Copying blob sha256:4d307587a70ed7c0cf19c89745141cf2fb32e838b2a519d72394d212da6d0953
+2026-08-21T05:49:14.6504343Z Copying blob sha256:0325d26159cc3d31816929d2769e90257a1d01d552b22ecd0c477dc5d8f0cf99
+2026-08-21T05:49:14.7155547Z Copying blob sha256:57967e0bc04bb5c36958d31e09697ae6446a4e715307c85b80b540e8f747e72c
+2026-08-21T05:49:17.7376479Z Copying blob sha256:5164f397d6c02e90b91c287e79a720a989e2459ecb77515ccae07ca44885df1f
+2026-08-21T05:50:05.9461624Z Copying config sha256:279fa71f7d9d9b14e1d4578be57a630d0c449ed40d4da40212987f8568f23c38
+2026-08-21T05:50:05.9664955Z Writing manifest to image destination
+2026-08-21T05:50:06.0481272Z Getting image source signatures
+2026-08-21T05:50:06.0501057Z Copying blob sha256:bcfdb487f53a395277456a16470c341ae16fad5ed86128135360b4b21cf67d95
+2026-08-21T05:50:06.1189981Z Copying blob sha256:e66280134db5fef9bfba629ecd469cdf4b088912748fe626283c0ea1b34c79ad
+2026-08-21T05:50:06.1341558Z Copying blob sha256:91185318f7821adaff0966f29100048ae7ff8f3a47c2dc336728b0fb6325c42b
+2026-08-21T05:50:06.3806055Z Copying blob sha256:b87187a1fbb9608ddde1886f79f96d2b82a768ce13cbb57e0723bd5b18c0e1a3
+2026-08-21T05:50:06.3840600Z Copying blob sha256:6945c943a3f6ef6821fa3db26629ce647cf8ac158a28c449cada012edfc40edc
+2026-08-21T05:50:06.3844407Z Copying blob sha256:9e94c30ac0957aa72905385b200a868ab3fade5992ad76d0ac49cf95877b4dfc
+2026-08-21T05:50:10.9340664Z Copying blob sha256:f8b045561dd97df203470170b8c727c82d84566fe6cc3072fa2f00b8e1ed19c8
+2026-08-21T05:50:10.9349097Z Copying blob sha256:0f00252c51b04a33d5960d687a3407976cd6fa292ade3b6fe20db6690dbb448b
+2026-08-21T05:50:10.9356882Z Copying blob sha256:51084dab2e920eb6d099bd46f75af0c0594f14299296fa76160e79e20c2e74c9
+2026-08-21T05:50:10.9365644Z Copying blob sha256:fdedaccf5cbc50b45ef0f9cca55fc8b5ea94693412d56f6b45e5e18eb084be82
+2026-08-21T05:50:25.4901267Z Copying blob sha256:b6b0088d6ef2ae7b11be8f71eb601898ac10226d6942f5288a51e6126186b8f1
+2026-08-21T05:50:25.4910522Z Copying blob sha256:645621bad1e7ad0215d7e06921271645cbd59a3f27c5219cdd5394473bf3e161
+2026-08-21T05:50:32.1375025Z Copying blob sha256:6c7279360787a7164e0f6c9052a44eb781236bb01a57868f288a2eb397ff8b69
+2026-08-21T05:50:32.1376887Z Copying blob sha256:ede9c66b6dfc2c562032ee5dcbc2d787e4259daba7126736f0c8cf76ef389ae9
+2026-08-21T05:50:41.5835090Z Copying blob sha256:b2034a1e87e0ac875981613a71d5b25bf2f246a02cabb8e85a49dab0257d944f
+2026-08-21T05:50:41.5876129Z Copying blob sha256:b91d47071a961bf7fd7ccfd313d10861e03a1a5833c6227d61e8fd1eef3bdfe8
+2026-08-21T05:50:41.6381510Z Copying blob sha256:3973e610a2137c8c0315cacc947cd51d158fcca84178d3f79931220ebfe1516d
+2026-08-21T05:50:41.6383803Z Copying blob sha256:4101979c24b0a8703dea98a47e637f5773713ea25e4f967cc342e082c5406b90
+2026-08-21T05:50:41.6388445Z Copying blob sha256:bbf36b48fd7ded6dbf899b3755d9fbd58027fc929ee9a739509f2a77e2c15b72
+2026-08-21T05:51:54.4024457Z Copying blob sha256:6931333d7ff5c621091f8315aa306fa7eeed415c5ca6329edb672025567db88a
+2026-08-21T05:51:54.4027041Z Copying blob sha256:e2cef0b738a875cdfc54b72ba93ee60818cfe886eaa2d99a655cf1d1c8bbfbd1
+2026-08-21T05:52:54.6226907Z Copying blob sha256:d8ad163793c016041296a9767f58b9000e83d374e21a5df04db902fe2674f577
+2026-08-21T05:52:54.6331261Z Copying blob sha256:7dc25cda872fe1dd05d029fb5ffdae91de17a5a9a6a24930c8efaf88cd54a6de
+2026-08-21T05:53:00.0963746Z Copying blob sha256:8f57c657f81f0a11c955326d37443e953fc70bda9c353b720fb956af4cb1e6db
+2026-08-21T05:53:00.0998965Z Copying blob sha256:ab9b82b39c11a0bf9391a9d97ccd3f5bd73dbdd9e9f03582d7625a8ba8d0088e
+2026-08-21T05:53:00.0999913Z Copying blob sha256:7edb4bf492d02fd7dab0e79bab0f31719127912adc2b312b9c7eb08ed328c75c
+2026-08-21T05:54:55.6228322Z Copying blob sha256:e6403df90aa09b3b5146bdd879326bfb0d32887d1163462af676bea3595e7816
+2026-08-21T05:54:55.6411310Z Copying config sha256:279fa71f7d9d9b14e1d4578be57a630d0c449ed40d4da40212987f8568f23c38
+2026-08-21T05:54:55.6416116Z Writing manifest to image destination
+2026-08-21T05:54:56.9492686Z {"manifest":{"descriptor":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:73d16db9a3e2408a41a52bf6ea30fea389de0179cad01e20eca21146fc67070f","size":4820,"annotations":{"org.opencontainers.image.ref.name":"sglang"}},"blob":{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:279fa71f7d9d9b14e1d4578be57a630d0c449ed40d4da40212987f8568f23c38","size":27905},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:bcfdb487f53a395277456a16470c341ae16fad5ed86128135360b4b21cf67d95","size":31627566},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e66280134db5fef9bfba629ecd469cdf4b088912748fe626283c0ea1b34c79ad","size":4667916},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:91185318f7821adaff0966f29100048ae7ff8f3a47c2dc336728b0fb6325c42b","size":109627330},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b87187a1fbb9608ddde1886f79f96d2b82a768ce13cbb57e0723bd5b18c0e1a3","size":195},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6945c943a3f6ef6821fa3db26629ce647cf8ac158a28c449cada012edfc40edc","size":7046},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:9e94c30ac0957aa72905385b200a868ab3fade5992ad76d0ac49cf95877b4dfc","size":1529947640},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:f8b045561dd97df203470170b8c727c82d84566fe6cc3072fa2f00b8e1ed19c8","size":62455},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:0f00252c51b04a33d5960d687a3407976cd6fa292ade3b6fe20db6690dbb448b","size":1714},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:51084dab2e920eb6d099bd46f75af0c0594f14299296fa76160e79e20c2e74c9","size":1539},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:fdedaccf5cbc50b45ef0f9cca55fc8b5ea94693412d56f6b45e5e18eb084be82","size":2362062710},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b6b0088d6ef2ae7b11be8f71eb601898ac10226d6942f5288a51e6126186b8f1","size":94085},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:645621bad1e7ad0215d7e06921271645cbd59a3f27c5219cdd5394473bf3e161","size":352195386},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6c7279360787a7164e0f6c9052a44eb781236bb01a57868f288a2eb397ff8b69","size":1002},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:ede9c66b6dfc2c562032ee5dcbc2d787e4259daba7126736f0c8cf76ef389ae9","size":1412314830},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b2034a1e87e0ac875981613a71d5b25bf2f246a02cabb8e85a49dab0257d944f","size":630},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b91d47071a961bf7fd7ccfd313d10861e03a1a5833c6227d61e8fd1eef3bdfe8","size":14854414},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:3973e610a2137c8c0315cacc947cd51d158fcca84178d3f79931220ebfe1516d","size":11082},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:4101979c24b0a8703dea98a47e637f5773713ea25e4f967cc342e082c5406b90","size":490},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:bbf36b48fd7ded6dbf899b3755d9fbd58027fc929ee9a739509f2a77e2c15b72","size":6302361055},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6931333d7ff5c621091f8315aa306fa7eeed415c5ca6329edb672025567db88a","size":739},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e2cef0b738a875cdfc54b72ba93ee60818cfe886eaa2d99a655cf1d1c8bbfbd1","size":443251639},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:d8ad163793c016041296a9767f58b9000e83d374e21a5df04db902fe2674f577","size":9585},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:7dc25cda872fe1dd05d029fb5ffdae91de17a5a9a6a24930c8efaf88cd54a6de","size":28303525},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:8f57c657f81f0a11c955326d37443e953fc70bda9c353b720fb956af4cb1e6db","size":207},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:ab9b82b39c11a0bf9391a9d97ccd3f5bd73dbdd9e9f03582d7625a8ba8d0088e","size":782},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:7edb4bf492d02fd7dab0e79bab0f31719127912adc2b312b9c7eb08ed328c75c","size":703434813},{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e6403df90aa09b3b5146bdd879326bfb0d32887d1163462af676bea3595e7816","size":1126}],"annotations":{"org.opencontainers.image.base.digest":"sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f","org.opencontainers.image.base.name":"docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f","org.opencontainers.image.created":"2026-08-21T05:45:00.152529154Z"}}},"config":{"descriptor":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:279fa71f7d9d9b14e1d4578be57a630d0c449ed40d4da40212987f8568f23c38","size":27905},"blob":{"created":"2026-08-21T05:45:00.152529154Z","architecture":"amd64","os":"linux","config":{"Env":["NVARCH=x86_64","NVIDIA_REQUIRE_CUDA=cuda\u003e=13.0 brand=unknown,driver\u003e=535,driver\u003c536 brand=grid,driver\u003e=535,driver\u003c536 brand=tesla,driver\u003e=535,driver\u003c536 brand=nvidia,driver\u003e=535,driver\u003c536 brand=quadro,driver\u003e=535,driver\u003c536 brand=quadrortx,driver\u003e=535,driver\u003c536 brand=nvidiartx,driver\u003e=535,driver\u003c536 brand=vapps,driver\u003e=535,driver\u003c536 brand=vpc,driver\u003e=535,driver\u003c536 brand=vcs,driver\u003e=535,driver\u003c536 brand=vws,driver\u003e=535,driver\u003c536 brand=cloudgaming,driver\u003e=535,driver\u003c536 brand=unknown,driver\u003e=550,driver\u003c551 brand=grid,driver\u003e=550,driver\u003c551 brand=tesla,driver\u003e=550,driver\u003c551 brand=nvidia,driver\u003e=550,driver\u003c551 brand=quadro,driver\u003e=550,driver\u003c551 brand=quadrortx,driver\u003e=550,driver\u003c551 brand=nvidiartx,driver\u003e=550,driver\u003c551 brand=vapps,driver\u003e=550,driver\u003c551 brand=vpc,driver\u003e=550,driver\u003c551 brand=vcs,driver\u003e=550,driver\u003c551 brand=vws,driver\u003e=550,driver\u003c551 brand=cloudgaming,driver\u003e=550,driver\u003c551 brand=unknown,driver\u003e=565,driver\u003c566 brand=grid,driver\u003e=565,driver\u003c566 brand=tesla,driver\u003e=565,driver\u003c566 brand=nvidia,driver\u003e=565,driver\u003c566 brand=quadro,driver\u003e=565,driver\u003c566 brand=quadrortx,driver\u003e=565,driver\u003c566 brand=nvidiartx,driver\u003e=565,driver\u003c566 brand=vapps,driver\u003e=565,driver\u003c566 brand=vpc,driver\u003e=565,driver\u003c566 brand=vcs,driver\u003e=565,driver\u003c566 brand=vws,driver\u003e=565,driver\u003c566 brand=cloudgaming,driver\u003e=565,driver\u003c566 brand=unknown,driver\u003e=570,driver\u003c571 brand=grid,driver\u003e=570,driver\u003c571 brand=tesla,driver\u003e=570,driver\u003c571 brand=nvidia,driver\u003e=570,driver\u003c571 brand=quadro,driver\u003e=570,driver\u003c571 brand=quadrortx,driver\u003e=570,driver\u003c571 brand=nvidiartx,driver\u003e=570,driver\u003c571 brand=vapps,driver\u003e=570,driver\u003c571 brand=vpc,driver\u003e=570,driver\u003c571 brand=vcs,driver\u003e=570,driver\u003c571 brand=vws,driver\u003e=570,driver\u003c571 brand=cloudgaming,driver\u003e=570,driver\u003c571 brand=unknown,driver\u003e=575,driver\u003c576 brand=grid,driver\u003e=575,driver\u003c576 brand=tesla,driver\u003e=575,driver\u003c576 brand=nvidia,driver\u003e=575,driver\u003c576 brand=quadro,driver\u003e=575,driver\u003c576 brand=quadrortx,driver\u003e=575,driver\u003c576 brand=nvidiartx,driver\u003e=575,driver\u003c576 brand=vapps,driver\u003e=575,driver\u003c576 brand=vpc,driver\u003e=575,driver\u003c576 brand=vcs,driver\u003e=575,driver\u003c576 brand=vws,driver\u003e=575,driver\u003c576 brand=cloudgaming,driver\u003e=575,driver\u003c576","NV_CUDA_CUDART_VERSION=13.0.88-1","CUDA_VERSION=13.0.1","NVIDIA_VISIBLE_DEVICES=all","NVIDIA_DRIVER_CAPABILITIES=compute,utility","NV_CUDA_LIB_VERSION=13.0.1-1","NV_NVTX_VERSION=13.0.85-1","NV_LIBNPP_VERSION=13.0.1.2-1","NV_LIBNPP_PACKAGE=libnpp-13-0=13.0.1.2-1","NV_LIBCUSPARSE_VERSION=12.6.3.3-1","NV_LIBCUBLAS_PACKAGE_NAME=libcublas-13-0","NV_LIBCUBLAS_VERSION=13.0.2.14-1","NV_LIBCUBLAS_PACKAGE=libcublas-13-0=13.0.2.14-1","NV_LIBNCCL_PACKAGE_NAME=libnccl2","NV_LIBNCCL_PACKAGE_VERSION=2.28.3-1","NCCL_VERSION=2.28.3-1","NV_LIBNCCL_PACKAGE=libnccl2=2.28.3-1+cuda13.0","NVIDIA_PRODUCT_NAME=CUDA","NV_CUDA_CUDART_DEV_VERSION=13.0.88-1","NV_NVML_DEV_VERSION=13.0.87-1","NV_LIBCUSPARSE_DEV_VERSION=12.6.3.3-1","NV_LIBNPP_DEV_VERSION=13.0.1.2-1","NV_LIBNPP_DEV_PACKAGE=libnpp-dev-13-0=13.0.1.2-1","NV_LIBCUBLAS_DEV_VERSION=13.0.2.14-1","NV_LIBCUBLAS_DEV_PACKAGE_NAME=libcublas-dev-13-0","NV_LIBCUBLAS_DEV_PACKAGE=libcublas-dev-13-0=13.0.2.14-1","NV_CUDA_NSIGHT_COMPUTE_VERSION=13.0.1-1","NV_CUDA_NSIGHT_COMPUTE_DEV_PACKAGE=cuda-nsight-compute-13-0=13.0.1-1","NV_LIBNCCL_DEV_PACKAGE_NAME=libnccl-dev","NV_LIBNCCL_DEV_PACKAGE_VERSION=2.28.3-1","NV_LIBNCCL_DEV_PACKAGE=libnccl-dev=2.28.3-1+cuda13.0","LIBRARY_PATH=/usr/local/cuda/lib64/stubs","NV_CUDNN_VERSION=9.13.0.50-1","NV_CUDNN_PACKAGE_NAME=libcudnn9-cuda-13","NV_CUDNN_PACKAGE=libcudnn9-cuda-13=9.13.0.50-1","NV_CUDNN_PACKAGE_DEV=libcudnn9-dev-cuda-13=9.13.0.50-1","NV_CUDNN_PACKAGE_DEV_HEADERS=libcudnn9-headers-cuda-13=9.13.0.50-1","CUDA_HOME=/usr/local/cuda","PATH=/opt/sglang/venv/bin:/opt/nccl-tests/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin","LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64","PIP_DISABLE_PIP_VERSION_CHECK=1"],"Entrypoint":["/opt/nvidia/nvidia_entrypoint.sh"],"Labels":{"ai.sglang.deepep-commit":"9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee","ai.sglang.mooncake-version":"0.3.11.post1","ai.sglang.mscclpp-version":"sglang-v0.9.1","ai.sglang.nccl-tests-ref":"717b68318278e93f371d8ffb46b076069d7c7851","ai.sglang.nccl-tests-source":"https://github.com/NVIDIA/nccl-tests","com.nvidia.cudnn.version":"9.13.0.50-1","io.buildah.version":"1.45.0","maintainer":"NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","org.opencontainers.image.description":"SGLang main built with uv for rootless OCI and Enroot execution","org.opencontainers.image.ref.name":"ubuntu","org.opencontainers.image.source":"https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src","org.opencontainers.image.title":"Source-built SGLang runtime","org.opencontainers.image.version":"24.04"}},"rootfs":{"type":"layers","diff_ids":["sha256:9d592720ced4a7a4ddf16adef8a126e4c8c49f22114de769343320b37674321e","sha256:66d3d8a459d5610ab77c9e2541f7de7c977629fc89134ce000e29922c8326924","sha256:6e7fca69a642c3dfa6e52b07f4bb96c93c57dcf7e2ee4dd5d96682b1aaa9398c","sha256:b800df4a565ef7287963fe8ee2de71a600389b25eba88ef56c15482209449e39","sha256:495bbaf4cc5ca53d8286fe305d2fc2fd3ecb2c8791cfdd4473e984d2eb0f3ea1","sha256:d6429da8e0adab7358ff80766fcc14c2f158a5ec45fe223bbe597070ba891ff4","sha256:bac4e3e37f04e8ed0ddf3539d8b9442e0b9571aba2efea5040ced367b820112b","sha256:4076b08c958d231f75437340dbfbb24d0f393fe79369c3ce2256f89bce8d5b57","sha256:cb4f3baf13cf2bd475654f1bbba2001cfb3ffe2ca7c3d5200602cb1250299342","sha256:16adf212c88e344ae0510016f125c8040cdb7a369a9f0ab2ad0f41320e8555f9","sha256:6265f25f914da0c2494e93c738a8a0decef66efdf86d426aa7ee499c1f8c0f1d","sha256:8720459fd8dacd4db6f35ae69460cd012a8eb661b9f6711cbfbc9403bae01cab","sha256:efdb0e77e4b988364d72d64f84644de689f654e9fab1079b6375ec6f7a67abb3","sha256:4ab764804632641e610019422901f750afcfc12da67840a5857b96fc0488d310","sha256:4224deb0d65ef89e3c3b3be3f2cc824ce12b12905ed468274ad420ffca0ce63f","sha256:1ba9b09e4b7b6dacc1e7a89d8a6c1e4facf1cc9c6aa2d02518f98d1f7232ebc3","sha256:faa78fc8f92572eb2a856119f8fbd782cc414faefe28486677dd8cdcd9ef6afb","sha256:6fde6df75b3881d8c3f2d45b84f27a20ad4ce0865f2a2c9f83de4b03a9b9309a","sha256:6c075f7fdf3cd011727dfb08eeaede4d85b002a179e454c58e66854a9a1eb3f4","sha256:ed92e075defac6e18ebd3e272537d82d0c40c271f6357b11d70a4fc0a7a47ba4","sha256:f8860c262d6ea735c8d5969c7a203f1dd21591dc768a86c1cf6005848f63b9ca","sha256:f4f6b6a4144cec7e4313d5d7090d7c272933d5acf5368d0570eac8338414acbc","sha256:2341e0f27dfe42e014564df2f4706c10e90b8e6d2f6b63bf93f8bd207d590776","sha256:4d307587a70ed7c0cf19c89745141cf2fb32e838b2a519d72394d212da6d0953","sha256:0325d26159cc3d31816929d2769e90257a1d01d552b22ecd0c477dc5d8f0cf99","sha256:57967e0bc04bb5c36958d31e09697ae6446a4e715307c85b80b540e8f747e72c","sha256:5164f397d6c02e90b91c287e79a720a989e2459ecb77515ccae07ca44885df1f"]},"history":[{"created":"2025-08-19T14:36:58.563415611Z","created_by":"/bin/sh -c #(nop)  ARG RELEASE","empty_layer":true},{"created":"2025-08-19T14:36:58.588740408Z","created_by":"/bin/sh -c #(nop)  ARG LAUNCHPAD_BUILD_ARCH","empty_layer":true},{"created":"2025-08-19T14:36:58.62539552Z","created_by":"/bin/sh -c #(nop)  LABEL org.opencontainers.image.ref.name=ubuntu","empty_layer":true},{"created":"2025-08-19T14:36:58.656408981Z","created_by":"/bin/sh -c #(nop)  LABEL org.opencontainers.image.version=24.04","empty_layer":true},{"created":"2025-08-19T14:37:00.843597813Z","created_by":"/bin/sh -c #(nop) ADD file:e67907c77897d27192314f6c4fa0112b6f7dce3e127500516535cc50fe736c92 in / "},{"created":"2025-08-19T14:37:01.23577114Z","created_by":"/bin/sh -c #(nop)  CMD [\"/bin/bash\"]","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NVARCH=x86_64","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NVIDIA_REQUIRE_CUDA=cuda\u003e=13.0 brand=unknown,driver\u003e=535,driver\u003c536 brand=grid,driver\u003e=535,driver\u003c536 brand=tesla,driver\u003e=535,driver\u003c536 brand=nvidia,driver\u003e=535,driver\u003c536 brand=quadro,driver\u003e=535,driver\u003c536 brand=quadrortx,driver\u003e=535,driver\u003c536 brand=nvidiartx,driver\u003e=535,driver\u003c536 brand=vapps,driver\u003e=535,driver\u003c536 brand=vpc,driver\u003e=535,driver\u003c536 brand=vcs,driver\u003e=535,driver\u003c536 brand=vws,driver\u003e=535,driver\u003c536 brand=cloudgaming,driver\u003e=535,driver\u003c536 brand=unknown,driver\u003e=550,driver\u003c551 brand=grid,driver\u003e=550,driver\u003c551 brand=tesla,driver\u003e=550,driver\u003c551 brand=nvidia,driver\u003e=550,driver\u003c551 brand=quadro,driver\u003e=550,driver\u003c551 brand=quadrortx,driver\u003e=550,driver\u003c551 brand=nvidiartx,driver\u003e=550,driver\u003c551 brand=vapps,driver\u003e=550,driver\u003c551 brand=vpc,driver\u003e=550,driver\u003c551 brand=vcs,driver\u003e=550,driver\u003c551 brand=vws,driver\u003e=550,driver\u003c551 brand=cloudgaming,driver\u003e=550,driver\u003c551 brand=unknown,driver\u003e=565,driver\u003c566 brand=grid,driver\u003e=565,driver\u003c566 brand=tesla,driver\u003e=565,driver\u003c566 brand=nvidia,driver\u003e=565,driver\u003c566 brand=quadro,driver\u003e=565,driver\u003c566 brand=quadrortx,driver\u003e=565,driver\u003c566 brand=nvidiartx,driver\u003e=565,driver\u003c566 brand=vapps,driver\u003e=565,driver\u003c566 brand=vpc,driver\u003e=565,driver\u003c566 brand=vcs,driver\u003e=565,driver\u003c566 brand=vws,driver\u003e=565,driver\u003c566 brand=cloudgaming,driver\u003e=565,driver\u003c566 brand=unknown,driver\u003e=570,driver\u003c571 brand=grid,driver\u003e=570,driver\u003c571 brand=tesla,driver\u003e=570,driver\u003c571 brand=nvidia,driver\u003e=570,driver\u003c571 brand=quadro,driver\u003e=570,driver\u003c571 brand=quadrortx,driver\u003e=570,driver\u003c571 brand=nvidiartx,driver\u003e=570,driver\u003c571 brand=vapps,driver\u003e=570,driver\u003c571 brand=vpc,driver\u003e=570,driver\u003c571 brand=vcs,driver\u003e=570,driver\u003c571 brand=vws,driver\u003e=570,driver\u003c571 brand=cloudgaming,driver\u003e=570,driver\u003c571 brand=unknown,driver\u003e=575,driver\u003c576 brand=grid,driver\u003e=575,driver\u003c576 brand=tesla,driver\u003e=575,driver\u003c576 brand=nvidia,driver\u003e=575,driver\u003c576 brand=quadro,driver\u003e=575,driver\u003c576 brand=quadrortx,driver\u003e=575,driver\u003c576 brand=nvidiartx,driver\u003e=575,driver\u003c576 brand=vapps,driver\u003e=575,driver\u003c576 brand=vpc,driver\u003e=575,driver\u003c576 brand=vcs,driver\u003e=575,driver\u003c576 brand=vws,driver\u003e=575,driver\u003c576 brand=cloudgaming,driver\u003e=575,driver\u003c576","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NV_CUDA_CUDART_VERSION=13.0.88-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     gnupg2 curl ca-certificates \u0026\u0026     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH}/3bf863cc.pub | apt-key add - \u0026\u0026     echo \"deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH} /\" \u003e /etc/apt/sources.list.d/cuda.list \u0026\u0026     apt-get purge --autoremove -y curl     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV CUDA_VERSION=13.0.1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:25:14.12344928Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-cudart-13-0=${NV_CUDA_CUDART_VERSION}     cuda-compat-13-0     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:25:14.265212435Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c echo \"/usr/local/cuda/lib64\" \u003e\u003e /etc/ld.so.conf.d/nvidia.conf # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:25:14.265212435Z","created_by":"ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:25:14.265212435Z","created_by":"ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:25:14.281395824Z","created_by":"COPY NGC-DL-CONTAINER-LICENSE / # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:25:14.281395824Z","created_by":"ENV NVIDIA_VISIBLE_DEVICES=all","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:25:14.281395824Z","created_by":"ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_CUDA_LIB_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_NVTX_VERSION=13.0.85-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNPP_VERSION=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNPP_PACKAGE=libnpp-13-0=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUSPARSE_VERSION=12.6.3.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_PACKAGE_NAME=libcublas-13-0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_VERSION=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_PACKAGE=libcublas-13-0=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE_NAME=libnccl2","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NCCL_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE=libnccl2=2.28.3-1+cuda13.0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.203806838Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-libraries-13-0=${NV_CUDA_LIB_VERSION}     ${NV_LIBNPP_PACKAGE}     cuda-nvtx-13-0=${NV_NVTX_VERSION}     libcusparse-13-0=${NV_LIBCUSPARSE_VERSION}     ${NV_LIBCUBLAS_PACKAGE}     ${NV_LIBNCCL_PACKAGE}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:36:59.490713018Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-mark hold ${NV_LIBCUBLAS_PACKAGE_NAME} ${NV_LIBNCCL_PACKAGE_NAME} # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:36:59.50217012Z","created_by":"COPY entrypoint.d/ /opt/nvidia/entrypoint.d/ # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:36:59.519872644Z","created_by":"COPY nvidia_entrypoint.sh /opt/nvidia/ # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T16:36:59.519872644Z","created_by":"ENV NVIDIA_PRODUCT_NAME=CUDA","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T16:36:59.519872644Z","created_by":"ENTRYPOINT [\"/opt/nvidia/nvidia_entrypoint.sh\"]","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_LIB_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_CUDART_DEV_VERSION=13.0.88-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_NVML_DEV_VERSION=13.0.87-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUSPARSE_DEV_VERSION=12.6.3.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNPP_DEV_VERSION=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNPP_DEV_PACKAGE=libnpp-dev-13-0=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_VERSION=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_PACKAGE_NAME=libcublas-dev-13-0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_PACKAGE=libcublas-dev-13-0=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_NSIGHT_COMPUTE_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_NSIGHT_COMPUTE_DEV_PACKAGE=cuda-nsight-compute-13-0=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE_NAME=libnccl-dev","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NCCL_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE=libnccl-dev=2.28.3-1+cuda13.0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:29:51.875696033Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-cudart-dev-13-0=${NV_CUDA_CUDART_DEV_VERSION}     cuda-command-line-tools-13-0=${NV_CUDA_LIB_VERSION}     cuda-minimal-build-13-0=${NV_CUDA_LIB_VERSION}     cuda-libraries-dev-13-0=${NV_CUDA_LIB_VERSION}     cuda-nvml-dev-13-0=${NV_NVML_DEV_VERSION}     ${NV_LIBNPP_DEV_PACKAGE}     libcusparse-dev-13-0=${NV_LIBCUSPARSE_DEV_VERSION}     ${NV_LIBCUBLAS_DEV_PACKAGE}     ${NV_LIBNCCL_DEV_PACKAGE}     ${NV_CUDA_NSIGHT_COMPUTE_DEV_PACKAGE}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T17:29:51.886748036Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-mark hold ${NV_LIBCUBLAS_DEV_PACKAGE_NAME} ${NV_LIBNCCL_DEV_PACKAGE_NAME} # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2025-09-08T17:29:51.886748036Z","created_by":"ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_VERSION=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_NAME=libcudnn9-cuda-13","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE=libcudnn9-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_DEV=libcudnn9-dev-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_DEV_HEADERS=libcudnn9-headers-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"LABEL com.nvidia.cudnn.version=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"created":"2025-09-08T17:30:50.97301874Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     ${NV_CUDNN_PACKAGE}     ${NV_CUDNN_PACKAGE_DEV}     ${NV_CUDNN_PACKAGE_DEV_HEADERS}     \u0026\u0026 apt-mark hold ${NV_CUDNN_PACKAGE_NAME}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"created":"2026-08-21T02:50:18.335444561Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.title=\"Source-built SGLang runtime\"","comment":"FROM docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f","empty_layer":true},{"created":"2026-08-21T02:50:19.085782746Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.description=\"SGLang main built with uv for rootless OCI and Enroot execution\"","empty_layer":true},{"created":"2026-08-21T02:50:19.951627975Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.source=\"https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src\"","empty_layer":true},{"created":"2026-08-21T02:50:20.634167225Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.nccl-tests-source=\"https://github.com/NVIDIA/nccl-tests\"","empty_layer":true},{"created":"2026-08-21T02:50:21.257592565Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.nccl-tests-ref=\"717b68318278e93f371d8ffb46b076069d7c7851\"","empty_layer":true},{"created":"2026-08-21T02:50:21.936606741Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.deepep-commit=\"9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee\"","empty_layer":true},{"created":"2026-08-21T02:50:22.5803366Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.mooncake-version=\"0.3.11.post1\"","empty_layer":true},{"created":"2026-08-21T02:50:23.214632939Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.mscclpp-version=\"sglang-v0.9.1\"","empty_layer":true},{"created":"2026-08-21T04:07:28.240621112Z","created_by":"/bin/sh -c #(nop) COPY file:3498f2089aa3cb61b601fbf6f225387f99d5a3d153a60c096fd34d2cd21bfe0f in /opt/apac/install-system-toolchain.sh      "},{"created":"2026-08-21T04:09:46.756853227Z","created_by":"/bin/sh -c /opt/apac/install-system-toolchain.sh \u0026\u0026 rm /opt/apac/install-system-toolchain.sh"},{"created":"2026-08-21T04:10:34.014853916Z","created_by":"/bin/sh -c #(nop) COPY file:25418981e424ec345fe02fb0742052db12271f9b7b93becba4297cf347f2eb14 in /opt/apac/build-nccl-tests.sh      "},{"created":"2026-08-21T04:12:03.889536966Z","created_by":"/bin/sh -c /opt/apac/build-nccl-tests.sh \u0026\u0026 rm /opt/apac/build-nccl-tests.sh"},{"created":"2026-08-21T04:12:12.412105235Z","created_by":"/bin/sh -c #(nop) COPY dir:3caa1f90eb4c34298ccd64716853b8179e18569829ae08cfcedc8f08ba90f02a in /opt/sglang-project-metadata      "},{"created":"2026-08-21T04:12:19.235223047Z","created_by":"/bin/sh -c #(nop) COPY file:f84be9abe076dfd0a07a6ffdf982bbc45c388b8f79e7b689b7165d35cb4f6dea in /opt/apac/install-python-dependencies.sh      "},{"created":"2026-08-21T04:46:46.419505736Z","created_by":"/bin/sh -c /opt/apac/install-python-dependencies.sh \u0026\u0026 rm /opt/apac/install-python-dependencies.sh"},{"created":"2026-08-21T04:49:55.732014618Z","created_by":"/bin/sh -c #(nop) COPY file:8a551ada9e35690efb1dd2bfbc2e1a28f2fce9dab76984fa2c4517572219655f in /opt/apac/install-accelerator-dependencies.sh      "},{"created":"2026-08-21T04:55:22.517812517Z","created_by":"/bin/sh -c /opt/apac/install-accelerator-dependencies.sh \u0026\u0026 rm /opt/apac/install-accelerator-dependencies.sh"},{"created":"2026-08-21T04:55:54.882166722Z","created_by":"/bin/sh -c #(nop) COPY dir:ad3589af8f07a9a1bbd20edd1ef49e92ee10a4039b4524e1fe79915dd6d7eec0 in /opt/sglang-patches      "},{"created":"2026-08-21T04:56:17.507170346Z","created_by":"/bin/sh -c #(nop) COPY dir:584ff392fd130d6c305418492cfbda448d8cc403bcba5f997bc8dfac1e7acc35 in /opt/sglang/source      "},{"created":"2026-08-21T04:56:40.892781314Z","created_by":"/bin/sh -c #(nop) COPY file:2a21f30c59dbb3339d3d81a551d15f7808e3eeab15109627c28caf3c23979b3a in /opt/sglang/sglang-commit.txt      "},{"created":"2026-08-21T04:57:03.058173153Z","created_by":"/bin/sh -c #(nop) COPY file:66dd558d4e3a28e4f2588d77bcb67c90ca73925534cd7e85871c7cd8caaa04f8 in /opt/apac/install-sglang-source.sh      "},{"created":"2026-08-21T05:00:18.955481419Z","created_by":"/bin/sh -c /opt/apac/install-sglang-source.sh \u0026\u0026 rm /opt/apac/install-sglang-source.sh"},{"created":"2026-08-21T05:44:05.505742817Z","created_by":"/bin/sh -c #(nop) COPY file:abc21c349384840cf9f899745fab5eb591298d061399eaba3b5972e7ba0f5839 in /opt/apac/manifest.json      "},{"created":"2026-08-21T05:44:25.306318806Z","created_by":"/bin/sh -c #(nop) ENV CUDA_HOME=/usr/local/cuda","empty_layer":true},{"created":"2026-08-21T05:44:37.185310679Z","created_by":"/bin/sh -c #(nop) ENV PATH=/opt/sglang/venv/bin:/opt/nccl-tests/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin","empty_layer":true},{"created":"2026-08-21T05:44:48.563110662Z","created_by":"/bin/sh -c #(nop) ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64","empty_layer":true},{"created":"2026-08-21T05:45:00.154379333Z","created_by":"/bin/sh -c #(nop) ENV PIP_DISABLE_PIP_VERSION_CHECK=1","empty_layer":true}]}},"history":[{"layer":null,"diff_id":"","created":"2025-08-19T14:36:58.563415611Z","created_by":"/bin/sh -c #(nop)  ARG RELEASE","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-08-19T14:36:58.588740408Z","created_by":"/bin/sh -c #(nop)  ARG LAUNCHPAD_BUILD_ARCH","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-08-19T14:36:58.62539552Z","created_by":"/bin/sh -c #(nop)  LABEL org.opencontainers.image.ref.name=ubuntu","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-08-19T14:36:58.656408981Z","created_by":"/bin/sh -c #(nop)  LABEL org.opencontainers.image.version=24.04","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:bcfdb487f53a395277456a16470c341ae16fad5ed86128135360b4b21cf67d95","size":31627566},"diff_id":"sha256:9d592720ced4a7a4ddf16adef8a126e4c8c49f22114de769343320b37674321e","created":"2025-08-19T14:37:00.843597813Z","created_by":"/bin/sh -c #(nop) ADD file:e67907c77897d27192314f6c4fa0112b6f7dce3e127500516535cc50fe736c92 in / "},{"layer":null,"diff_id":"","created":"2025-08-19T14:37:01.23577114Z","created_by":"/bin/sh -c #(nop)  CMD [\"/bin/bash\"]","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NVARCH=x86_64","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NVIDIA_REQUIRE_CUDA=cuda\u003e=13.0 brand=unknown,driver\u003e=535,driver\u003c536 brand=grid,driver\u003e=535,driver\u003c536 brand=tesla,driver\u003e=535,driver\u003c536 brand=nvidia,driver\u003e=535,driver\u003c536 brand=quadro,driver\u003e=535,driver\u003c536 brand=quadrortx,driver\u003e=535,driver\u003c536 brand=nvidiartx,driver\u003e=535,driver\u003c536 brand=vapps,driver\u003e=535,driver\u003c536 brand=vpc,driver\u003e=535,driver\u003c536 brand=vcs,driver\u003e=535,driver\u003c536 brand=vws,driver\u003e=535,driver\u003c536 brand=cloudgaming,driver\u003e=535,driver\u003c536 brand=unknown,driver\u003e=550,driver\u003c551 brand=grid,driver\u003e=550,driver\u003c551 brand=tesla,driver\u003e=550,driver\u003c551 brand=nvidia,driver\u003e=550,driver\u003c551 brand=quadro,driver\u003e=550,driver\u003c551 brand=quadrortx,driver\u003e=550,driver\u003c551 brand=nvidiartx,driver\u003e=550,driver\u003c551 brand=vapps,driver\u003e=550,driver\u003c551 brand=vpc,driver\u003e=550,driver\u003c551 brand=vcs,driver\u003e=550,driver\u003c551 brand=vws,driver\u003e=550,driver\u003c551 brand=cloudgaming,driver\u003e=550,driver\u003c551 brand=unknown,driver\u003e=565,driver\u003c566 brand=grid,driver\u003e=565,driver\u003c566 brand=tesla,driver\u003e=565,driver\u003c566 brand=nvidia,driver\u003e=565,driver\u003c566 brand=quadro,driver\u003e=565,driver\u003c566 brand=quadrortx,driver\u003e=565,driver\u003c566 brand=nvidiartx,driver\u003e=565,driver\u003c566 brand=vapps,driver\u003e=565,driver\u003c566 brand=vpc,driver\u003e=565,driver\u003c566 brand=vcs,driver\u003e=565,driver\u003c566 brand=vws,driver\u003e=565,driver\u003c566 brand=cloudgaming,driver\u003e=565,driver\u003c566 brand=unknown,driver\u003e=570,driver\u003c571 brand=grid,driver\u003e=570,driver\u003c571 brand=tesla,driver\u003e=570,driver\u003c571 brand=nvidia,driver\u003e=570,driver\u003c571 brand=quadro,driver\u003e=570,driver\u003c571 brand=quadrortx,driver\u003e=570,driver\u003c571 brand=nvidiartx,driver\u003e=570,driver\u003c571 brand=vapps,driver\u003e=570,driver\u003c571 brand=vpc,driver\u003e=570,driver\u003c571 brand=vcs,driver\u003e=570,driver\u003c571 brand=vws,driver\u003e=570,driver\u003c571 brand=cloudgaming,driver\u003e=570,driver\u003c571 brand=unknown,driver\u003e=575,driver\u003c576 brand=grid,driver\u003e=575,driver\u003c576 brand=tesla,driver\u003e=575,driver\u003c576 brand=nvidia,driver\u003e=575,driver\u003c576 brand=quadro,driver\u003e=575,driver\u003c576 brand=quadrortx,driver\u003e=575,driver\u003c576 brand=nvidiartx,driver\u003e=575,driver\u003c576 brand=vapps,driver\u003e=575,driver\u003c576 brand=vpc,driver\u003e=575,driver\u003c576 brand=vcs,driver\u003e=575,driver\u003c576 brand=vws,driver\u003e=575,driver\u003c576 brand=cloudgaming,driver\u003e=575,driver\u003c576","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV NV_CUDA_CUDART_VERSION=13.0.88-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e66280134db5fef9bfba629ecd469cdf4b088912748fe626283c0ea1b34c79ad","size":4667916},"diff_id":"sha256:66d3d8a459d5610ab77c9e2541f7de7c977629fc89134ce000e29922c8326924","created":"2025-09-08T16:23:24.137259525Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     gnupg2 curl ca-certificates \u0026\u0026     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH}/3bf863cc.pub | apt-key add - \u0026\u0026     echo \"deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH} /\" \u003e /etc/apt/sources.list.d/cuda.list \u0026\u0026     apt-get purge --autoremove -y curl     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2025-09-08T16:23:24.137259525Z","created_by":"ENV CUDA_VERSION=13.0.1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:91185318f7821adaff0966f29100048ae7ff8f3a47c2dc336728b0fb6325c42b","size":109627330},"diff_id":"sha256:6e7fca69a642c3dfa6e52b07f4bb96c93c57dcf7e2ee4dd5d96682b1aaa9398c","created":"2025-09-08T16:25:14.12344928Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-cudart-13-0=${NV_CUDA_CUDART_VERSION}     cuda-compat-13-0     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b87187a1fbb9608ddde1886f79f96d2b82a768ce13cbb57e0723bd5b18c0e1a3","size":195},"diff_id":"sha256:b800df4a565ef7287963fe8ee2de71a600389b25eba88ef56c15482209449e39","created":"2025-09-08T16:25:14.265212435Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c echo \"/usr/local/cuda/lib64\" \u003e\u003e /etc/ld.so.conf.d/nvidia.conf # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2025-09-08T16:25:14.265212435Z","created_by":"ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:25:14.265212435Z","created_by":"ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6945c943a3f6ef6821fa3db26629ce647cf8ac158a28c449cada012edfc40edc","size":7046},"diff_id":"sha256:495bbaf4cc5ca53d8286fe305d2fc2fd3ecb2c8791cfdd4473e984d2eb0f3ea1","created":"2025-09-08T16:25:14.281395824Z","created_by":"COPY NGC-DL-CONTAINER-LICENSE / # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2025-09-08T16:25:14.281395824Z","created_by":"ENV NVIDIA_VISIBLE_DEVICES=all","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:25:14.281395824Z","created_by":"ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_CUDA_LIB_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_NVTX_VERSION=13.0.85-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNPP_VERSION=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNPP_PACKAGE=libnpp-13-0=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUSPARSE_VERSION=12.6.3.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_PACKAGE_NAME=libcublas-13-0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_VERSION=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBCUBLAS_PACKAGE=libcublas-13-0=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE_NAME=libnccl2","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NCCL_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ENV NV_LIBNCCL_PACKAGE=libnccl2=2.28.3-1+cuda13.0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.203806838Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:9e94c30ac0957aa72905385b200a868ab3fade5992ad76d0ac49cf95877b4dfc","size":1529947640},"diff_id":"sha256:d6429da8e0adab7358ff80766fcc14c2f158a5ec45fe223bbe597070ba891ff4","created":"2025-09-08T16:36:59.203806838Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-libraries-13-0=${NV_CUDA_LIB_VERSION}     ${NV_LIBNPP_PACKAGE}     cuda-nvtx-13-0=${NV_NVTX_VERSION}     libcusparse-13-0=${NV_LIBCUSPARSE_VERSION}     ${NV_LIBCUBLAS_PACKAGE}     ${NV_LIBNCCL_PACKAGE}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:f8b045561dd97df203470170b8c727c82d84566fe6cc3072fa2f00b8e1ed19c8","size":62455},"diff_id":"sha256:bac4e3e37f04e8ed0ddf3539d8b9442e0b9571aba2efea5040ced367b820112b","created":"2025-09-08T16:36:59.490713018Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-mark hold ${NV_LIBCUBLAS_PACKAGE_NAME} ${NV_LIBNCCL_PACKAGE_NAME} # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:0f00252c51b04a33d5960d687a3407976cd6fa292ade3b6fe20db6690dbb448b","size":1714},"diff_id":"sha256:4076b08c958d231f75437340dbfbb24d0f393fe79369c3ce2256f89bce8d5b57","created":"2025-09-08T16:36:59.50217012Z","created_by":"COPY entrypoint.d/ /opt/nvidia/entrypoint.d/ # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:51084dab2e920eb6d099bd46f75af0c0594f14299296fa76160e79e20c2e74c9","size":1539},"diff_id":"sha256:cb4f3baf13cf2bd475654f1bbba2001cfb3ffe2ca7c3d5200602cb1250299342","created":"2025-09-08T16:36:59.519872644Z","created_by":"COPY nvidia_entrypoint.sh /opt/nvidia/ # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.519872644Z","created_by":"ENV NVIDIA_PRODUCT_NAME=CUDA","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T16:36:59.519872644Z","created_by":"ENTRYPOINT [\"/opt/nvidia/nvidia_entrypoint.sh\"]","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_LIB_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_CUDART_DEV_VERSION=13.0.88-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_NVML_DEV_VERSION=13.0.87-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUSPARSE_DEV_VERSION=12.6.3.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNPP_DEV_VERSION=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNPP_DEV_PACKAGE=libnpp-dev-13-0=13.0.1.2-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_VERSION=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_PACKAGE_NAME=libcublas-dev-13-0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBCUBLAS_DEV_PACKAGE=libcublas-dev-13-0=13.0.2.14-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_NSIGHT_COMPUTE_VERSION=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_CUDA_NSIGHT_COMPUTE_DEV_PACKAGE=cuda-nsight-compute-13-0=13.0.1-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE_NAME=libnccl-dev","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NCCL_VERSION=2.28.3-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ENV NV_LIBNCCL_DEV_PACKAGE=libnccl-dev=2.28.3-1+cuda13.0","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.875696033Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:fdedaccf5cbc50b45ef0f9cca55fc8b5ea94693412d56f6b45e5e18eb084be82","size":2362062710},"diff_id":"sha256:16adf212c88e344ae0510016f125c8040cdb7a369a9f0ab2ad0f41320e8555f9","created":"2025-09-08T17:29:51.875696033Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     cuda-cudart-dev-13-0=${NV_CUDA_CUDART_DEV_VERSION}     cuda-command-line-tools-13-0=${NV_CUDA_LIB_VERSION}     cuda-minimal-build-13-0=${NV_CUDA_LIB_VERSION}     cuda-libraries-dev-13-0=${NV_CUDA_LIB_VERSION}     cuda-nvml-dev-13-0=${NV_NVML_DEV_VERSION}     ${NV_LIBNPP_DEV_PACKAGE}     libcusparse-dev-13-0=${NV_LIBCUSPARSE_DEV_VERSION}     ${NV_LIBCUBLAS_DEV_PACKAGE}     ${NV_LIBNCCL_DEV_PACKAGE}     ${NV_CUDA_NSIGHT_COMPUTE_DEV_PACKAGE}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b6b0088d6ef2ae7b11be8f71eb601898ac10226d6942f5288a51e6126186b8f1","size":94085},"diff_id":"sha256:6265f25f914da0c2494e93c738a8a0decef66efdf86d426aa7ee499c1f8c0f1d","created":"2025-09-08T17:29:51.886748036Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-mark hold ${NV_LIBCUBLAS_DEV_PACKAGE_NAME} ${NV_LIBNCCL_DEV_PACKAGE_NAME} # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2025-09-08T17:29:51.886748036Z","created_by":"ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_VERSION=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_NAME=libcudnn9-cuda-13","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE=libcudnn9-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_DEV=libcudnn9-dev-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ENV NV_CUDNN_PACKAGE_DEV_HEADERS=libcudnn9-headers-cuda-13=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"ARG TARGETARCH","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"LABEL maintainer=NVIDIA CORPORATION \u003ccudatools@nvidia.com\u003e","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":null,"diff_id":"","created":"2025-09-08T17:30:50.97301874Z","created_by":"LABEL com.nvidia.cudnn.version=9.13.0.50-1","comment":"buildkit.dockerfile.v0","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:645621bad1e7ad0215d7e06921271645cbd59a3f27c5219cdd5394473bf3e161","size":352195386},"diff_id":"sha256:8720459fd8dacd4db6f35ae69460cd012a8eb661b9f6711cbfbc9403bae01cab","created":"2025-09-08T17:30:50.97301874Z","created_by":"RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends     ${NV_CUDNN_PACKAGE}     ${NV_CUDNN_PACKAGE_DEV}     ${NV_CUDNN_PACKAGE_DEV_HEADERS}     \u0026\u0026 apt-mark hold ${NV_CUDNN_PACKAGE_NAME}     \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit","comment":"buildkit.dockerfile.v0"},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:18.335444561Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.title=\"Source-built SGLang runtime\"","comment":"FROM docker.io/nvidia/cuda@sha256:5a2d3b02eb7412847d051d0f2b0f0a5031057a0172d9ca78743cc41cfc5d037f","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:19.085782746Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.description=\"SGLang main built with uv for rootless OCI and Enroot execution\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:19.951627975Z","created_by":"/bin/sh -c #(nop) LABEL org.opencontainers.image.source=\"https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:20.634167225Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.nccl-tests-source=\"https://github.com/NVIDIA/nccl-tests\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:21.257592565Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.nccl-tests-ref=\"717b68318278e93f371d8ffb46b076069d7c7851\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:21.936606741Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.deepep-commit=\"9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:22.5803366Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.mooncake-version=\"0.3.11.post1\"","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T02:50:23.214632939Z","created_by":"/bin/sh -c #(nop) LABEL ai.sglang.mscclpp-version=\"sglang-v0.9.1\"","empty_layer":true},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6c7279360787a7164e0f6c9052a44eb781236bb01a57868f288a2eb397ff8b69","size":1002},"diff_id":"sha256:efdb0e77e4b988364d72d64f84644de689f654e9fab1079b6375ec6f7a67abb3","created":"2026-08-21T04:07:28.240621112Z","created_by":"/bin/sh -c #(nop) COPY file:3498f2089aa3cb61b601fbf6f225387f99d5a3d153a60c096fd34d2cd21bfe0f in /opt/apac/install-system-toolchain.sh      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:ede9c66b6dfc2c562032ee5dcbc2d787e4259daba7126736f0c8cf76ef389ae9","size":1412314830},"diff_id":"sha256:4ab764804632641e610019422901f750afcfc12da67840a5857b96fc0488d310","created":"2026-08-21T04:09:46.756853227Z","created_by":"/bin/sh -c /opt/apac/install-system-toolchain.sh \u0026\u0026 rm /opt/apac/install-system-toolchain.sh"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b2034a1e87e0ac875981613a71d5b25bf2f246a02cabb8e85a49dab0257d944f","size":630},"diff_id":"sha256:4224deb0d65ef89e3c3b3be3f2cc824ce12b12905ed468274ad420ffca0ce63f","created":"2026-08-21T04:10:34.014853916Z","created_by":"/bin/sh -c #(nop) COPY file:25418981e424ec345fe02fb0742052db12271f9b7b93becba4297cf347f2eb14 in /opt/apac/build-nccl-tests.sh      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:b91d47071a961bf7fd7ccfd313d10861e03a1a5833c6227d61e8fd1eef3bdfe8","size":14854414},"diff_id":"sha256:1ba9b09e4b7b6dacc1e7a89d8a6c1e4facf1cc9c6aa2d02518f98d1f7232ebc3","created":"2026-08-21T04:12:03.889536966Z","created_by":"/bin/sh -c /opt/apac/build-nccl-tests.sh \u0026\u0026 rm /opt/apac/build-nccl-tests.sh"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:3973e610a2137c8c0315cacc947cd51d158fcca84178d3f79931220ebfe1516d","size":11082},"diff_id":"sha256:faa78fc8f92572eb2a856119f8fbd782cc414faefe28486677dd8cdcd9ef6afb","created":"2026-08-21T04:12:12.412105235Z","created_by":"/bin/sh -c #(nop) COPY dir:3caa1f90eb4c34298ccd64716853b8179e18569829ae08cfcedc8f08ba90f02a in /opt/sglang-project-metadata      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:4101979c24b0a8703dea98a47e637f5773713ea25e4f967cc342e082c5406b90","size":490},"diff_id":"sha256:6fde6df75b3881d8c3f2d45b84f27a20ad4ce0865f2a2c9f83de4b03a9b9309a","created":"2026-08-21T04:12:19.235223047Z","created_by":"/bin/sh -c #(nop) COPY file:f84be9abe076dfd0a07a6ffdf982bbc45c388b8f79e7b689b7165d35cb4f6dea in /opt/apac/install-python-dependencies.sh      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:bbf36b48fd7ded6dbf899b3755d9fbd58027fc929ee9a739509f2a77e2c15b72","size":6302361055},"diff_id":"sha256:6c075f7fdf3cd011727dfb08eeaede4d85b002a179e454c58e66854a9a1eb3f4","created":"2026-08-21T04:46:46.419505736Z","created_by":"/bin/sh -c /opt/apac/install-python-dependencies.sh \u0026\u0026 rm /opt/apac/install-python-dependencies.sh"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:6931333d7ff5c621091f8315aa306fa7eeed415c5ca6329edb672025567db88a","size":739},"diff_id":"sha256:ed92e075defac6e18ebd3e272537d82d0c40c271f6357b11d70a4fc0a7a47ba4","created":"2026-08-21T04:49:55.732014618Z","created_by":"/bin/sh -c #(nop) COPY file:8a551ada9e35690efb1dd2bfbc2e1a28f2fce9dab76984fa2c4517572219655f in /opt/apac/install-accelerator-dependencies.sh      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e2cef0b738a875cdfc54b72ba93ee60818cfe886eaa2d99a655cf1d1c8bbfbd1","size":443251639},"diff_id":"sha256:f8860c262d6ea735c8d5969c7a203f1dd21591dc768a86c1cf6005848f63b9ca","created":"2026-08-21T04:55:22.517812517Z","created_by":"/bin/sh -c /opt/apac/install-accelerator-dependencies.sh \u0026\u0026 rm /opt/apac/install-accelerator-dependencies.sh"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:d8ad163793c016041296a9767f58b9000e83d374e21a5df04db902fe2674f577","size":9585},"diff_id":"sha256:f4f6b6a4144cec7e4313d5d7090d7c272933d5acf5368d0570eac8338414acbc","created":"2026-08-21T04:55:54.882166722Z","created_by":"/bin/sh -c #(nop) COPY dir:ad3589af8f07a9a1bbd20edd1ef49e92ee10a4039b4524e1fe79915dd6d7eec0 in /opt/sglang-patches      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:7dc25cda872fe1dd05d029fb5ffdae91de17a5a9a6a24930c8efaf88cd54a6de","size":28303525},"diff_id":"sha256:2341e0f27dfe42e014564df2f4706c10e90b8e6d2f6b63bf93f8bd207d590776","created":"2026-08-21T04:56:17.507170346Z","created_by":"/bin/sh -c #(nop) COPY dir:584ff392fd130d6c305418492cfbda448d8cc403bcba5f997bc8dfac1e7acc35 in /opt/sglang/source      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:8f57c657f81f0a11c955326d37443e953fc70bda9c353b720fb956af4cb1e6db","size":207},"diff_id":"sha256:4d307587a70ed7c0cf19c89745141cf2fb32e838b2a519d72394d212da6d0953","created":"2026-08-21T04:56:40.892781314Z","created_by":"/bin/sh -c #(nop) COPY file:2a21f30c59dbb3339d3d81a551d15f7808e3eeab15109627c28caf3c23979b3a in /opt/sglang/sglang-commit.txt      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:ab9b82b39c11a0bf9391a9d97ccd3f5bd73dbdd9e9f03582d7625a8ba8d0088e","size":782},"diff_id":"sha256:0325d26159cc3d31816929d2769e90257a1d01d552b22ecd0c477dc5d8f0cf99","created":"2026-08-21T04:57:03.058173153Z","created_by":"/bin/sh -c #(nop) COPY file:66dd558d4e3a28e4f2588d77bcb67c90ca73925534cd7e85871c7cd8caaa04f8 in /opt/apac/install-sglang-source.sh      "},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:7edb4bf492d02fd7dab0e79bab0f31719127912adc2b312b9c7eb08ed328c75c","size":703434813},"diff_id":"sha256:57967e0bc04bb5c36958d31e09697ae6446a4e715307c85b80b540e8f747e72c","created":"2026-08-21T05:00:18.955481419Z","created_by":"/bin/sh -c /opt/apac/install-sglang-source.sh \u0026\u0026 rm /opt/apac/install-sglang-source.sh"},{"layer":{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:e6403df90aa09b3b5146bdd879326bfb0d32887d1163462af676bea3595e7816","size":1126},"diff_id":"sha256:5164f397d6c02e90b91c287e79a720a989e2459ecb77515ccae07ca44885df1f","created":"2026-08-21T05:44:05.505742817Z","created_by":"/bin/sh -c #(nop) COPY file:abc21c349384840cf9f899745fab5eb591298d061399eaba3b5972e7ba0f5839 in /opt/apac/manifest.json      "},{"layer":null,"diff_id":"","created":"2026-08-21T05:44:25.306318806Z","created_by":"/bin/sh -c #(nop) ENV CUDA_HOME=/usr/local/cuda","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T05:44:37.185310679Z","created_by":"/bin/sh -c #(nop) ENV PATH=/opt/sglang/venv/bin:/opt/nccl-tests/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T05:44:48.563110662Z","created_by":"/bin/sh -c #(nop) ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64","empty_layer":true},{"layer":null,"diff_id":"","created":"2026-08-21T05:45:00.154379333Z","created_by":"/bin/sh -c #(nop) ENV PIP_DISABLE_PIP_VERSION_CHECK=1","empty_layer":true}]}
+2026-08-21T05:54:58.0451552Z Parallel mksquashfs: Using 4 processors
+2026-08-21T05:54:58.0469443Z Creating 4.0 filesystem on /dev/shm/qwen-sglang-container/run-32451446703-1/sglang.sqsh, block size 131072.
+2026-08-21T05:54:58.0471990Z 
+2026-08-21T05:55:02.0590913Z bash: line 1: 869975 Killed                  mksquashfs "${rootfs}" "${build_dir}/sglang.sqsh" -noappend -all-root -no-xattrs -no-duplicates -comp gzip -Xcompression-level 2 -processors 4 -mem 2G 2>&1
+2026-08-21T05:55:02.0593802Z      869976 Done                    | tee "${build_dir}/logs/mksquashfs.log"
+2026-08-21T05:55:06.4668805Z [/                                                           ]     0/52181   0%
+2026-08-21T05:55:06.5831948Z ##[error]Process completed with exit code 137.
+2026-08-21T05:55:06.8476980Z ##[group]Run actions/upload-artifact@v7
+2026-08-21T05:55:06.8480635Z with:
+2026-08-21T05:55:06.8481261Z   name: qwen-aspire2ap-container-build-32451446703-1
+2026-08-21T05:55:06.8487338Z   path: /dev/shm/qwen-sglang-container/run-32451446703-1/logs
+2026-08-21T05:55:06.8491333Z   if-no-files-found: warn
+2026-08-21T05:55:06.8495552Z   compression-level: 1
+2026-08-21T05:55:06.8498734Z   overwrite: false
+2026-08-21T05:55:06.8501644Z   include-hidden-files: false
+2026-08-21T05:55:06.8503064Z   archive: true
+2026-08-21T05:55:06.8505988Z env:
+2026-08-21T05:55:06.8508926Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:55:06.8511920Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:55:06.8512660Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:55:06.8515201Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:55:06.8519945Z   BUILD_DIR: /dev/shm/qwen-sglang-container/run-32451446703-1
+2026-08-21T05:55:06.8521671Z ##[endgroup]
+2026-08-21T05:55:07.9254152Z With the provided path, there will be 8 files uploaded
+2026-08-21T05:55:07.9257788Z Artifact name is valid!
+2026-08-21T05:55:07.9261030Z Root directory input is valid!
+2026-08-21T05:55:08.8691241Z Uploading artifact: qwen-aspire2ap-container-build-32451446703-1.zip
+2026-08-21T05:55:08.8892589Z Beginning upload of artifact content to blob storage
+2026-08-21T05:55:10.2108279Z Uploaded bytes 19253
+2026-08-21T05:55:11.1519521Z Finished uploading artifact content to blob storage!
+2026-08-21T05:55:11.1524010Z SHA256 digest of uploaded artifact is a1708baf301cb845e831919da75f9d2bd9b06b29f22b3f1b268caf30dfcfc29a
+2026-08-21T05:55:11.1529538Z Finalizing artifact upload
+2026-08-21T05:55:12.0264439Z Artifact qwen-aspire2ap-container-build-32451446703-1 successfully finalized. Artifact ID 9436063855
+2026-08-21T05:55:12.0270773Z Artifact qwen-aspire2ap-container-build-32451446703-1 has been successfully uploaded! Final size is 19253 bytes. Artifact ID is 9436063855
+2026-08-21T05:55:12.0381154Z Artifact download URL: https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/32451446703#artifacts
+2026-08-21T05:55:12.0968851Z ##[group]Run chmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"
+2026-08-21T05:55:12.0969591Z [36;1mchmod -R u+rwX "${BUILD_DIR}" 2>/dev/null || true; rm -rf -- "${BUILD_DIR:?}"[0m
+2026-08-21T05:55:12.1014156Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-21T05:55:12.1016276Z env:
+2026-08-21T05:55:12.1018256Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:55:12.1020709Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:55:12.1022215Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:55:12.1025148Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:55:12.1028882Z   BUILD_DIR: /dev/shm/qwen-sglang-container/run-32451446703-1
+2026-08-21T05:55:12.1031563Z ##[endgroup]
+2026-08-21T05:55:15.1426255Z Post job cleanup.
+2026-08-21T05:55:15.2483938Z [command]/usr/bin/git version
+2026-08-21T05:55:15.2559362Z git version 2.34.1
+2026-08-21T05:55:15.2607332Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-21T05:55:15.2652033Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/097c1fb2-0593-4ad1-8288-902be0dba830' before making global git config changes
+2026-08-21T05:55:15.2655017Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:55:15.2658740Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen
+2026-08-21T05:55:15.2765860Z Removing SSH command configuration
+2026-08-21T05:55:15.2772844Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:55:15.2836907Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:55:15.3437678Z Removing HTTP extra header
+2026-08-21T05:55:15.3440039Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:55:15.3503538Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:55:15.4025148Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:55:15.4029791Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:55:15.4087585Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:55:15.4090710Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:55:15.4093220Z includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:55:15.4093780Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:55:15.4100114Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:55:15.4139252Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:55:15.4150750Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-3\/_work\/_temp\/git\-credentials\-638d7aed\-b2ba\-4d7e\-8a50\-f5ea24ae5e53\.config
+2026-08-21T05:55:15.4229963Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:55:15.4276607Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:55:15.4284801Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-3\/_work\/_temp\/git\-credentials\-638d7aed\-b2ba\-4d7e\-8a50\-f5ea24ae5e53\.config
+2026-08-21T05:55:15.4352089Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:55:15.4411682Z /github/runner_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:55:15.4418267Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-638d7aed\-b2ba\-4d7e\-8a50\-f5ea24ae5e53\.config
+2026-08-21T05:55:15.4482650Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:55:15.4529668Z /github/runner_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config
+2026-08-21T05:55:15.4537199Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-638d7aed\-b2ba\-4d7e\-8a50\-f5ea24ae5e53\.config
+2026-08-21T05:55:15.4619937Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:55:15.5106656Z Removing credentials config '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-3/_work/_temp/git-credentials-638d7aed-b2ba-4d7e-8a50-f5ea24ae5e53.config'
+2026-08-21T05:55:15.5446582Z Cleaning up orphan processes
+
+===== 4_ASPIRE 2A+ _ OCIコンテナを選択.txt =====
+﻿2026-08-21T05:41:24.8647401Z Current runner version: '2.336.0'
+2026-08-21T05:41:24.8661455Z Runner name: 'a2ap-login01-6'
+2026-08-21T05:41:24.8662275Z Runner group name: 'default'
+2026-08-21T05:41:24.8663198Z Machine name: 'a2ap-login01'
+2026-08-21T05:41:24.8668449Z ##[group]GITHUB_TOKEN Permissions
+2026-08-21T05:41:24.8670997Z Actions: read
+2026-08-21T05:41:24.8671560Z Contents: read
+2026-08-21T05:41:24.8672201Z Metadata: read
+2026-08-21T05:41:24.8672769Z ##[endgroup]
+2026-08-21T05:41:24.8674879Z Secret source: Actions
+2026-08-21T05:41:24.8676267Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTP requests.
+2026-08-21T05:41:24.8677607Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTPS requests.
+2026-08-21T05:41:24.8678633Z Prepare workflow directory
+2026-08-21T05:41:24.9174074Z Prepare all required actions
+2026-08-21T05:41:24.9224654Z Getting action download info
+2026-08-21T05:41:25.9081228Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-21T05:41:27.0751660Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:27.0759143Z ##[group] Inputs
+2026-08-21T05:41:27.0760698Z   node_count: 1
+2026-08-21T05:41:27.0762493Z   profile: false
+2026-08-21T05:41:27.0763945Z   require_build: true
+2026-08-21T05:41:27.0765376Z ##[endgroup]
+2026-08-21T05:41:27.0766884Z Complete job name: ASPIRE 2A+ / OCIコンテナを選択
+2026-08-21T05:41:27.3554256Z ##[group]Run actions/checkout@v7
+2026-08-21T05:41:27.3555964Z with:
+2026-08-21T05:41:27.3556935Z   fetch-depth: 0
+2026-08-21T05:41:27.3558191Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:27.3567293Z   token: ***
+2026-08-21T05:41:27.3568358Z   ssh-strict: true
+2026-08-21T05:41:27.3569439Z   ssh-user: git
+2026-08-21T05:41:27.3570538Z   persist-credentials: true
+2026-08-21T05:41:27.3571736Z   clean: true
+2026-08-21T05:41:27.3572837Z   sparse-checkout-cone-mode: true
+2026-08-21T05:41:27.3574154Z   fetch-tags: false
+2026-08-21T05:41:27.3575253Z   show-progress: true
+2026-08-21T05:41:27.3576335Z   lfs: false
+2026-08-21T05:41:27.3577373Z   submodules: false
+2026-08-21T05:41:27.3578417Z   set-safe-directory: true
+2026-08-21T05:41:27.3579602Z   allow-unsafe-pr-checkout: false
+2026-08-21T05:41:27.3581053Z env:
+2026-08-21T05:41:27.3582548Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:41:27.3584787Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:41:27.3587263Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:41:27.3589558Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:41:27.3591106Z ##[endgroup]
+2026-08-21T05:41:28.3801471Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:28.3806252Z ##[group]Getting Git version info
+2026-08-21T05:41:28.3808634Z Working directory is '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen'
+2026-08-21T05:41:28.3811633Z [command]/usr/bin/git version
+2026-08-21T05:41:28.3846596Z git version 2.34.1
+2026-08-21T05:41:28.3919762Z ##[endgroup]
+2026-08-21T05:41:28.3943399Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-21T05:41:28.3996050Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/6f2e6444-da18-403f-a36e-7ae9dec9cc63' before making global git config changes
+2026-08-21T05:41:28.3999500Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:41:28.4006832Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-21T05:41:28.4132266Z Deleting the contents of '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen'
+2026-08-21T05:41:28.4158515Z ##[group]Determining repository object format
+2026-08-21T05:41:28.4163347Z ##[endgroup]
+2026-08-21T05:41:28.4165077Z ##[group]Initializing the repository
+2026-08-21T05:41:28.4174402Z [command]/usr/bin/git init /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-21T05:41:28.4336226Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-21T05:41:28.4338703Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-21T05:41:28.4340645Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-21T05:41:28.4342092Z hint: 
+2026-08-21T05:41:28.4343322Z hint: 	git config --global init.defaultBranch <name>
+2026-08-21T05:41:28.4344606Z hint: 
+2026-08-21T05:41:28.4345880Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-21T05:41:28.4347941Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-21T05:41:28.4349441Z hint: 
+2026-08-21T05:41:28.4350402Z hint: 	git branch -m <name>
+2026-08-21T05:41:28.4439024Z Initialized empty Git repository in /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/
+2026-08-21T05:41:28.4465367Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:28.4585690Z ##[endgroup]
+2026-08-21T05:41:28.4587520Z ##[group]Disabling automatic garbage collection
+2026-08-21T05:41:28.4596280Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-21T05:41:28.4672732Z ##[endgroup]
+2026-08-21T05:41:28.4674340Z ##[group]Setting up auth
+2026-08-21T05:41:28.4675532Z Removing SSH command configuration
+2026-08-21T05:41:28.4693433Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:41:28.4765666Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:41:28.5247514Z Removing HTTP extra header
+2026-08-21T05:41:28.5258462Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:41:28.5326676Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:41:28.5849323Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:41:28.5863110Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:41:28.5951438Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:41:28.6477035Z [command]/usr/bin/git config --file /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-21T05:41:28.6587764Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:28.6666523Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:28.6751212Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:28.6853666Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:28.6929479Z ##[endgroup]
+2026-08-21T05:41:28.6931169Z ##[group]Fetching the repository
+2026-08-21T05:41:28.6950847Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+2026-08-21T05:41:29.8970995Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:29.8973586Z  * [new branch]      agent/genkai-build-and-pjwait -> origin/agent/genkai-build-and-pjwait
+2026-08-21T05:41:29.9003789Z  * [new branch]      agent/verify-pjm-lifecycle -> origin/agent/verify-pjm-lifecycle
+2026-08-21T05:41:29.9048687Z  * [new branch]      codex/sglang-qwen35-experiments -> origin/codex/sglang-qwen35-experiments
+2026-08-21T05:41:29.9080081Z  * [new branch]      issue-7-oci-enroot -> origin/issue-7-oci-enroot
+2026-08-21T05:41:29.9110213Z  * [new branch]      main               -> origin/main
+2026-08-21T05:41:29.9294481Z [command]/usr/bin/git branch --list --remote origin/issue-7-oci-enroot
+2026-08-21T05:41:29.9427736Z   origin/issue-7-oci-enroot
+2026-08-21T05:41:29.9445743Z [command]/usr/bin/git rev-parse refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:29.9506290Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:29.9511764Z ##[endgroup]
+2026-08-21T05:41:29.9513527Z ##[group]Determining the checkout info
+2026-08-21T05:41:29.9515385Z ##[endgroup]
+2026-08-21T05:41:29.9524314Z [command]/usr/bin/git sparse-checkout disable
+2026-08-21T05:41:29.9658147Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-21T05:41:29.9736128Z ##[group]Checking out the ref
+2026-08-21T05:41:29.9745625Z [command]/usr/bin/git checkout --progress --force -B issue-7-oci-enroot refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:30.0798215Z Switched to a new branch 'issue-7-oci-enroot'
+2026-08-21T05:41:30.0815563Z Branch 'issue-7-oci-enroot' set up to track remote branch 'issue-7-oci-enroot' from 'origin'.
+2026-08-21T05:41:30.0829262Z ##[endgroup]
+2026-08-21T05:41:30.0984085Z [command]/usr/bin/git log -1 --format=%H
+2026-08-21T05:41:30.1073203Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:30.2044629Z ##[group]Run buildah --version && skopeo --version && umoci --version && enroot version && nvidia-container-cli --version
+2026-08-21T05:41:30.2048018Z [36;1mbuildah --version && skopeo --version && umoci --version && enroot version && nvidia-container-cli --version[0m
+2026-08-21T05:41:30.2113311Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-21T05:41:30.2114675Z env:
+2026-08-21T05:41:30.2116160Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:41:30.2118244Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:41:30.2120398Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:41:30.2122512Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:41:30.2123945Z ##[endgroup]
+2026-08-21T05:41:30.6489550Z buildah version 1.45.0 (image-spec 1.1.1, runtime-spec 1.3.0)
+2026-08-21T05:41:30.8975169Z skopeo version 1.24.0 commit: ea7faa7ba79b2e3308259673fbd3b472198afd1a
+2026-08-21T05:41:30.9438793Z umoci version 0.6.0
+2026-08-21T05:41:30.9440415Z image spec: 1.1.1
+2026-08-21T05:41:30.9441934Z runtime spec: 1.2.1
+2026-08-21T05:41:30.9443442Z go: go1.25.1
+2026-08-21T05:41:30.9992271Z 4.2.0
+2026-08-21T05:41:31.0028592Z cli-version: 1.17.4
+2026-08-21T05:41:31.0030193Z lib-version: 1.17.4
+2026-08-21T05:41:31.0031759Z build date: 2025-01-23T10:53+00:00
+2026-08-21T05:41:31.0034222Z build revision: f23e5e55ea27b3680aef363436d4bcf7659e0bfc
+2026-08-21T05:41:31.0036496Z build compiler: x86_64-linux-gnu-gcc-7 7.5.0
+2026-08-21T05:41:31.0038571Z build platform: x86_64
+2026-08-21T05:41:31.0048477Z build flags: -D_GNU_SOURCE -D_FORTIFY_SOURCE=2 -DNDEBUG -std=gnu11 -O2 -g -fdata-sections -ffunction-sections -fplan9-extensions -fstack-protector -fno-strict-aliasing -fvisibility=hidden -Wall -Wextra -Wcast-align -Wpointer-arith -Wmissing-prototypes -Wnonnull -Wwrite-strings -Wlogical-op -Wformat=2 -Wmissing-format-attribute -Winit-self -Wshadow -Wstrict-prototypes -Wunreachable-code -Wconversion -Wsign-conversion -Wno-unknown-warning-option -Wno-format-extra-args -Wno-gnu-alignof-expression -Wl,-zrelro -Wl,-znow -Wl,-zdefs -Wl,--gc-sections
+2026-08-21T05:41:31.0490987Z ##[group]Run if [[ 'true' == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi
+2026-08-21T05:41:31.0494077Z [36;1mif [[ 'true' == true ]]; then printf 'action=build\n' >>"${GITHUB_OUTPUT}"; exit 0; fi[0m
+2026-08-21T05:41:31.0496311Z [36;1mcommit="${GITHUB_SHA}"[0m
+2026-08-21T05:41:31.0498366Z [36;1mwhile [[ -n "${commit}" ]]; do[0m
+2026-08-21T05:41:31.0500192Z [36;1m  while IFS= read -r run_id; do[0m
+2026-08-21T05:41:31.0502028Z [36;1m    [[ "${run_id}" != "${GITHUB_RUN_ID}" ]] || continue[0m
+2026-08-21T05:41:31.0504007Z [36;1m    archive="${CONTAINER_ARCHIVE_DIR}/${run_id}.sqsh"[0m
+2026-08-21T05:41:31.0506133Z [36;1m    sidecar="${CONTAINER_ARCHIVE_DIR}/${run_id}.container-sidecar.json"[0m
+2026-08-21T05:41:31.0508421Z [36;1m    [[ -s "${archive}" && -s "${sidecar}" ]] || continue[0m
+2026-08-21T05:41:31.0512122Z [36;1m    expected_size="$(jq -er 'select(.schema_version == "container-sidecar/v1") | .container_artifact.size_bytes' "${sidecar}" 2>/dev/null)" || continue[0m
+2026-08-21T05:41:31.0515712Z [36;1m    expected_sha256="$(jq -er '.container_artifact.sha256' "${sidecar}" 2>/dev/null)" || continue[0m
+2026-08-21T05:41:31.0518499Z [36;1m    [[ "$(stat -c '%s' "${archive}")" == "${expected_size}" ]] || continue[0m
+2026-08-21T05:41:31.0520980Z [36;1m    [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${expected_sha256}" ]] || continue[0m
+2026-08-21T05:41:31.0523726Z [36;1m    printf 'action=reuse\nsource_run_id=%s\n' "${run_id}" >>"${GITHUB_OUTPUT}"[0m
+2026-08-21T05:41:31.0526039Z [36;1m    exit 0[0m
+2026-08-21T05:41:31.0529156Z [36;1m  done < <(gh run list --workflow qwen.yml --commit "${commit}" --limit 100 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)[0m
+2026-08-21T05:41:31.0532042Z [36;1m  commit="$(git rev-parse "${commit}^" 2>/dev/null || true)"[0m
+2026-08-21T05:41:31.0533943Z [36;1mdone[0m
+2026-08-21T05:41:31.0535532Z [36;1mprintf 'action=build\n' >>"${GITHUB_OUTPUT}"[0m
+2026-08-21T05:41:31.0596932Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-21T05:41:31.0598807Z env:
+2026-08-21T05:41:31.0600692Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-21T05:41:31.0603073Z   GIT_MIRROR_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/git-mirror
+2026-08-21T05:41:31.0605576Z   MODEL_CACHE_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/models/Qwen3.5-397B-A17B-FP8-metadata
+2026-08-21T05:41:31.0608435Z   RUNTIME_ROOT: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs
+2026-08-21T05:41:31.0618550Z   GH_TOKEN: ***
+2026-08-21T05:41:31.0620075Z ##[endgroup]
+2026-08-21T05:41:31.2341950Z Post job cleanup.
+2026-08-21T05:41:31.3369954Z [command]/usr/bin/git version
+2026-08-21T05:41:31.3427801Z git version 2.34.1
+2026-08-21T05:41:31.3458115Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-21T05:41:31.3496474Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/f63172c1-ae3d-4787-ae97-0ed41f06b22a' before making global git config changes
+2026-08-21T05:41:31.3499700Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:41:31.3502397Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-21T05:41:31.3575229Z Removing SSH command configuration
+2026-08-21T05:41:31.3580814Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:41:31.3645579Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:41:31.4156900Z Removing HTTP extra header
+2026-08-21T05:41:31.4161509Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:41:31.4215702Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:41:31.4730575Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:41:31.4740380Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:41:31.4804559Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:41:31.4807669Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:41:31.4809776Z includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:41:31.4811049Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:41:31.4824284Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:41:31.4876404Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:31.4896035Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-6\/_work\/_temp\/git\-credentials\-d203fec1\-0397\-4c9c\-8406\-330d87d53505\.config
+2026-08-21T05:41:31.4985003Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:41:31.5056174Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:31.5070313Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-6\/_work\/_temp\/git\-credentials\-d203fec1\-0397\-4c9c\-8406\-330d87d53505\.config
+2026-08-21T05:41:31.5141400Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:41:31.5207035Z /github/runner_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:31.5211165Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-d203fec1\-0397\-4c9c\-8406\-330d87d53505\.config
+2026-08-21T05:41:31.5274100Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:41:31.5316973Z /github/runner_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config
+2026-08-21T05:41:31.5326144Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-d203fec1\-0397\-4c9c\-8406\-330d87d53505\.config
+2026-08-21T05:41:31.5395219Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:41:31.5904402Z Removing credentials config '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-d203fec1-0397-4c9c-8406-330d87d53505.config'
+2026-08-21T05:41:31.6329218Z Evaluate and set job outputs
+2026-08-21T05:41:31.6352043Z Set output 'action'
+2026-08-21T05:41:31.6357867Z Cleaning up orphan processes
+
+===== 6_制御処理を検証 _ validate.txt =====
+﻿2026-08-21T05:41:04.5062116Z Current runner version: '2.336.0'
+2026-08-21T05:41:04.5081375Z ##[group]Runner Image Provisioner
+2026-08-21T05:41:04.5082141Z Hosted Compute Agent
+2026-08-21T05:41:04.5082707Z Version: 20260729.566
+2026-08-21T05:41:04.5083223Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-21T05:41:04.5083856Z Build Date: 2026-07-29T19:17:02Z
+2026-08-21T05:41:04.5084422Z Worker ID: {ecb43a21-3429-4428-8f8e-86fb76edd426}
+2026-08-21T05:41:04.5085013Z Azure Region: centralus
+2026-08-21T05:41:04.5085500Z ##[endgroup]
+2026-08-21T05:41:04.5086559Z ##[group]Operating System
+2026-08-21T05:41:04.5087065Z Ubuntu
+2026-08-21T05:41:04.5087870Z 24.04.4
+2026-08-21T05:41:04.5088307Z LTS
+2026-08-21T05:41:04.5088785Z ##[endgroup]
+2026-08-21T05:41:04.5089244Z ##[group]Runner Image
+2026-08-21T05:41:04.5089747Z Image: ubuntu-24.04
+2026-08-21T05:41:04.5090238Z Version: 20260816.277.1
+2026-08-21T05:41:04.5091264Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260816.277/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-21T05:41:04.5092548Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260816.277
+2026-08-21T05:41:04.5093307Z ##[endgroup]
+2026-08-21T05:41:04.5094222Z ##[group]GITHUB_TOKEN Permissions
+2026-08-21T05:41:04.5096848Z Contents: read
+2026-08-21T05:41:04.5098010Z Metadata: read
+2026-08-21T05:41:04.5098644Z ##[endgroup]
+2026-08-21T05:41:04.5100890Z Secret source: Actions
+2026-08-21T05:41:04.5102153Z Prepare workflow directory
+2026-08-21T05:41:04.5396350Z Prepare all required actions
+2026-08-21T05:41:04.5435763Z Getting action download info
+2026-08-21T05:41:04.7878528Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-21T05:41:05.0516072Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-08-21T05:41:05.6074351Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:05.6079179Z Complete job name: 制御処理を検証 / validate
+2026-08-21T05:41:05.6645662Z ##[group]Run actions/checkout@v7
+2026-08-21T05:41:05.6646422Z with:
+2026-08-21T05:41:05.6646907Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:05.6650644Z   token: ***
+2026-08-21T05:41:05.6651108Z   ssh-strict: true
+2026-08-21T05:41:05.6651533Z   ssh-user: git
+2026-08-21T05:41:05.6651982Z   persist-credentials: true
+2026-08-21T05:41:05.6652493Z   clean: true
+2026-08-21T05:41:05.6652938Z   sparse-checkout-cone-mode: true
+2026-08-21T05:41:05.6653464Z   fetch-depth: 1
+2026-08-21T05:41:05.6653892Z   fetch-tags: false
+2026-08-21T05:41:05.6654613Z   show-progress: true
+2026-08-21T05:41:05.6655054Z   lfs: false
+2026-08-21T05:41:05.6655449Z   submodules: false
+2026-08-21T05:41:05.6655940Z   set-safe-directory: true
+2026-08-21T05:41:05.6656426Z   allow-unsafe-pr-checkout: false
+2026-08-21T05:41:05.6657097Z ##[endgroup]
+2026-08-21T05:41:05.7608608Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:05.7612510Z ##[group]Getting Git version info
+2026-08-21T05:41:05.7613646Z Working directory is '/home/runner/work/2_Qwen/2_Qwen'
+2026-08-21T05:41:05.7619732Z [command]/usr/bin/git version
+2026-08-21T05:41:05.7778230Z git version 2.55.0
+2026-08-21T05:41:05.7783051Z ##[endgroup]
+2026-08-21T05:41:05.7791787Z Temporarily overriding HOME='/home/runner/work/_temp/aad6d24c-23d0-406c-bb90-37079c726f23' before making global git config changes
+2026-08-21T05:41:05.7794051Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:41:05.7839041Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-08-21T05:41:05.7885689Z Deleting the contents of '/home/runner/work/2_Qwen/2_Qwen'
+2026-08-21T05:41:05.7887327Z ##[group]Determining repository object format
+2026-08-21T05:41:05.7888673Z ##[endgroup]
+2026-08-21T05:41:05.7890105Z ##[group]Initializing the repository
+2026-08-21T05:41:05.7891511Z [command]/usr/bin/git init /home/runner/work/2_Qwen/2_Qwen
+2026-08-21T05:41:05.7957509Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-21T05:41:05.7973112Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-21T05:41:05.7983979Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-21T05:41:05.7985104Z hint: call:
+2026-08-21T05:41:05.7985645Z hint:
+2026-08-21T05:41:05.7986310Z hint: 	git config --global init.defaultBranch <name>
+2026-08-21T05:41:05.7987112Z hint:
+2026-08-21T05:41:05.7988118Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-21T05:41:05.7989326Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-21T05:41:05.7990298Z hint:
+2026-08-21T05:41:05.7990849Z hint: 	git branch -m <name>
+2026-08-21T05:41:05.7991569Z hint:
+2026-08-21T05:41:05.7992556Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-21T05:41:05.7993758Z Initialized empty Git repository in /home/runner/work/2_Qwen/2_Qwen/.git/
+2026-08-21T05:41:05.7995968Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:05.8053682Z ##[endgroup]
+2026-08-21T05:41:05.8055024Z ##[group]Disabling automatic garbage collection
+2026-08-21T05:41:05.8056240Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-21T05:41:05.8086408Z ##[endgroup]
+2026-08-21T05:41:05.8088990Z ##[group]Setting up auth
+2026-08-21T05:41:05.8090321Z Removing SSH command configuration
+2026-08-21T05:41:05.8091986Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:41:05.8179899Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:41:05.8582343Z Removing HTTP extra header
+2026-08-21T05:41:05.8586085Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:41:05.8590370Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:41:05.8824231Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:41:05.8828216Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:41:05.8860015Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:41:05.9052994Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-21T05:41:05.9085709Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path /home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:05.9114071Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:05.9145991Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:05.9252551Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:05.9262567Z ##[endgroup]
+2026-08-21T05:41:05.9263634Z ##[group]Fetching the repository
+2026-08-21T05:41:05.9265104Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ab1f8862a5bdb7f6abef69ee629d255e8d9ca616:refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4272241Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-21T05:41:06.4362353Z  * [new ref]         ab1f8862a5bdb7f6abef69ee629d255e8d9ca616 -> origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4367832Z [command]/usr/bin/git branch --list --remote origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4370063Z   origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4374052Z [command]/usr/bin/git rev-parse refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4376345Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:06.4381365Z ##[endgroup]
+2026-08-21T05:41:06.4383545Z ##[group]Determining the checkout info
+2026-08-21T05:41:06.4385961Z ##[endgroup]
+2026-08-21T05:41:06.4387685Z [command]/usr/bin/git sparse-checkout disable
+2026-08-21T05:41:06.4392641Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-21T05:41:06.4411688Z ##[group]Checking out the ref
+2026-08-21T05:41:06.4415320Z [command]/usr/bin/git checkout --progress --force -B issue-7-oci-enroot refs/remotes/origin/issue-7-oci-enroot
+2026-08-21T05:41:06.4515180Z Switched to a new branch 'issue-7-oci-enroot'
+2026-08-21T05:41:06.4521466Z branch 'issue-7-oci-enroot' set up to track 'origin/issue-7-oci-enroot'.
+2026-08-21T05:41:06.4533697Z ##[endgroup]
+2026-08-21T05:41:06.4568685Z [command]/usr/bin/git log -1 --format=%H
+2026-08-21T05:41:06.4588357Z ab1f8862a5bdb7f6abef69ee629d255e8d9ca616
+2026-08-21T05:41:06.4981977Z ##[group]Run astral-sh/setup-uv@v7
+2026-08-21T05:41:06.4983125Z with:
+2026-08-21T05:41:06.4984107Z   activate-environment: false
+2026-08-21T05:41:06.4985406Z   working-directory: /home/runner/work/2_Qwen/2_Qwen
+2026-08-21T05:41:06.4994328Z   github-token: ***
+2026-08-21T05:41:06.4995311Z   enable-cache: auto
+2026-08-21T05:41:06.4997535Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-08-21T05:41:06.4999955Z   restore-cache: true
+2026-08-21T05:41:06.5000969Z   save-cache: true
+2026-08-21T05:41:06.5001946Z   prune-cache: true
+2026-08-21T05:41:06.5002941Z   cache-python: false
+2026-08-21T05:41:06.5003967Z   ignore-nothing-to-cache: false
+2026-08-21T05:41:06.5005161Z   ignore-empty-workdir: false
+2026-08-21T05:41:06.5006284Z   add-problem-matchers: true
+2026-08-21T05:41:06.5007456Z   resolution-strategy: highest
+2026-08-21T05:41:06.5008557Z ##[endgroup]
+2026-08-21T05:41:06.6750590Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-08-21T05:41:06.6753415Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-08-21T05:41:06.6787822Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-08-21T05:41:06.6809108Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-08-21T05:41:06.6849410Z Could not determine uv version from uv.toml or pyproject.toml. Falling back to latest.
+2026-08-21T05:41:06.6879911Z Fetching version data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-08-21T05:41:06.8088063Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.12.5/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-08-21T05:41:07.0002864Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/f46f9f74-a3cb-4009-8406-9425b0cd9ea8 -f /home/runner/work/_temp/59bf1610-e836-41ee-8642-4b261ccb53b1
+2026-08-21T05:41:08.4509177Z Added /home/runner/.local/bin to the path
+2026-08-21T05:41:08.4528647Z Added /opt/hostedtoolcache/uv/0.12.5/x86_64 to the path
+2026-08-21T05:41:08.4530095Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:08.4531162Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-08-21T05:41:08.4561840Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:08.4562652Z Successfully installed uv version 0.12.5
+2026-08-21T05:41:08.5370088Z Searching files using cache dependency glob: /home/runner/work/2_Qwen/2_Qwen/**/*requirements*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*requirements*.in,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.in,/home/runner/work/2_Qwen/2_Qwen/**/pyproject.toml,/home/runner/work/2_Qwen/2_Qwen/**/uv.lock,/home/runner/work/2_Qwen/2_Qwen/**/*.py.lock
+2026-08-21T05:41:08.5587693Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/pyproject.toml
+2026-08-21T05:41:08.5659786Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/uv.lock
+2026-08-21T05:41:08.5711754Z Found 2 files to hash.
+2026-08-21T05:41:08.5755324Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-21T05:41:08.6906786Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-21T05:41:09.2830508Z Received 2894751 of 2894751 (100.0%), 5.9 MBs/sec
+2026-08-21T05:41:09.2832154Z Cache Size: ~3 MB (2894751 B)
+2026-08-21T05:41:09.2870389Z [command]/usr/bin/tar -xf /home/runner/work/_temp/00000000-0000-0000-0000-000000000000/cache.tzst -P -C /home/runner/work/2_Qwen/2_Qwen --use-compress-program unzstd
+2026-08-21T05:41:09.3046893Z Cache restored successfully
+2026-08-21T05:41:09.3052359Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-21T05:41:09.3678332Z ##[group]Run find scripts platforms containers -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' \) -print0 | xargs -0 -r -n1 bash -n
+2026-08-21T05:41:09.3679231Z [36;1mfind scripts platforms containers -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' \) -print0 | xargs -0 -r -n1 bash -n[0m
+2026-08-21T05:41:09.3708227Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:09.3708618Z env:
+2026-08-21T05:41:09.3708990Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:09.3709427Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:09.3709808Z ##[endgroup]
+2026-08-21T05:41:09.4859879Z ##[group]Run uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]'
+2026-08-21T05:41:09.4860791Z [36;1muvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]'[0m
+2026-08-21T05:41:09.4881875Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:09.4882236Z env:
+2026-08-21T05:41:09.4882616Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:09.4883035Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:09.4883466Z ##[endgroup]
+2026-08-21T05:41:10.6289123Z Installed 1 package in 240ms
+2026-08-21T05:41:10.9505015Z ##[group]Run uvx --from 'actionlint-py==1.7.12.24' actionlint
+2026-08-21T05:41:10.9505470Z [36;1muvx --from 'actionlint-py==1.7.12.24' actionlint[0m
+2026-08-21T05:41:10.9528541Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:10.9528898Z env:
+2026-08-21T05:41:10.9529227Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:10.9530060Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:10.9530399Z ##[endgroup]
+2026-08-21T05:41:11.5737846Z Installed 1 package in 209ms
+2026-08-21T05:41:12.6646071Z ##[group]Run ! rg --line-number '\\$' scripts platforms containers .github/workflows
+2026-08-21T05:41:12.6646653Z [36;1m! rg --line-number '\\$' scripts platforms containers .github/workflows[0m
+2026-08-21T05:41:12.6669518Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:12.6669946Z env:
+2026-08-21T05:41:12.6670474Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:12.6671010Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:12.6671362Z ##[endgroup]
+2026-08-21T05:41:12.6713194Z /home/runner/work/_temp/794c61e6-100d-4806-9205-44e199bdff15.sh: line 1: rg: command not found
+2026-08-21T05:41:12.6749187Z ##[group]Run uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts
+2026-08-21T05:41:12.6749960Z [36;1muv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts[0m
+2026-08-21T05:41:12.6767884Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:12.6768242Z env:
+2026-08-21T05:41:12.6768579Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:12.6769024Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:12.6769386Z ##[endgroup]
+2026-08-21T05:41:12.6886830Z Using CPython 3.12.3 interpreter at: /usr/bin/python3
+2026-08-21T05:41:12.6887844Z Creating virtual environment at: qwen-experiment-metrics/.venv
+2026-08-21T05:41:12.6954614Z    Building qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-08-21T05:41:12.7629081Z Downloading ruff (10.9MiB)
+2026-08-21T05:41:12.7675737Z Downloading pygments (1.2MiB)
+2026-08-21T05:41:12.9955615Z  Downloaded pygments
+2026-08-21T05:41:13.2090704Z  Downloaded ruff
+2026-08-21T05:41:13.2674827Z       Built qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-08-21T05:41:13.2731553Z Installed 8 packages in 5ms
+2026-08-21T05:41:13.2983957Z All checks passed!
+2026-08-21T05:41:13.3056629Z ##[group]Run uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests
+2026-08-21T05:41:13.3057920Z [36;1muv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests[0m
+2026-08-21T05:41:13.3079229Z shell: /usr/bin/bash -e {0}
+2026-08-21T05:41:13.3079583Z env:
+2026-08-21T05:41:13.3079891Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:13.3080268Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:13.3080639Z ##[endgroup]
+2026-08-21T05:41:14.6395353Z ........................................................................ [ 88%]
+2026-08-21T05:41:15.8159007Z .........                                                                [100%]
+2026-08-21T05:41:15.8557776Z Post job cleanup.
+2026-08-21T05:41:15.9505701Z UV_CACHE_DIR is already set to /home/runner/work/_temp/setup-uv-cache
+2026-08-21T05:41:15.9509250Z UV_PYTHON_INSTALL_DIR is already set to /home/runner/work/_temp/uv-python-dir
+2026-08-21T05:41:15.9510519Z Cache hit occurred on key setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1, not saving cache.
+2026-08-21T05:41:16.0196547Z Post job cleanup.
+2026-08-21T05:41:16.0958161Z [command]/usr/bin/git version
+2026-08-21T05:41:16.1018243Z git version 2.55.0
+2026-08-21T05:41:16.1108475Z Temporarily overriding HOME='/home/runner/work/_temp/d5c48f5a-69f3-43c5-9e56-b3c71fc5ee27' before making global git config changes
+2026-08-21T05:41:16.1118423Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-21T05:41:16.1128545Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-08-21T05:41:16.1139442Z Removing SSH command configuration
+2026-08-21T05:41:16.1140461Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-21T05:41:16.1188772Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-21T05:41:16.1508023Z Removing HTTP extra header
+2026-08-21T05:41:16.1528386Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-21T05:41:16.1592695Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-21T05:41:16.1941501Z Removing includeIf entries pointing to credentials config files
+2026-08-21T05:41:16.1959798Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-21T05:41:16.1976058Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:41:16.1998716Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:41:16.2008132Z includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:41:16.2038027Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:41:16.2098192Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-08-21T05:41:16.2115720Z /home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:16.2168930Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-1bca89d0\-7cc6\-4286\-a056\-8778ce60f360\.config
+2026-08-21T05:41:16.2198466Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-21T05:41:16.2209822Z /home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:16.2271874Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-1bca89d0\-7cc6\-4286\-a056\-8778ce60f360\.config
+2026-08-21T05:41:16.2353917Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-21T05:41:16.2381216Z /github/runner_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:16.2389127Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-1bca89d0\-7cc6\-4286\-a056\-8778ce60f360\.config
+2026-08-21T05:41:16.2468630Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-21T05:41:16.2469746Z /github/runner_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config
+2026-08-21T05:41:16.2471985Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-1bca89d0\-7cc6\-4286\-a056\-8778ce60f360\.config
+2026-08-21T05:41:16.2474423Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-21T05:41:16.2699370Z Removing credentials config '/home/runner/work/_temp/git-credentials-1bca89d0-7cc6-4286-a056-8778ce60f360.config'
+2026-08-21T05:41:16.2835293Z Cleaning up orphan processes
+
+===== ASPIRE 2A+ _ OCIコンテナをビルド/system.txt =====
+2026-08-21T05:41:39.9850000Z Evaluating aspire2ap.if
+2026-08-21T05:41:39.9850000Z Evaluating: (success() && (((((github.event_name == 'push') && contains(github.event.head_commit.message, '[cluster:aspire2ap]'))) || (((github.event_name == 'workflow_dispatch') && inputs.run_aspire2ap)))))
+2026-08-21T05:41:39.9850000Z Expanded: (true && ((('push' == 'push') && contains('[require-build] [cluster:aspire2ap] [nodes:1] SquashFS圧縮memoryを明示制限
+
+ASPIRE 2A+ run 32450435733ではBuildah cache、image検査、OCI push、Skopeo copy、umoci stat、VFS rootfs mountまで成功した後、mksquashfsが6%でexit 137となった。mksquashfs -mem-defaultはhost全体を基準に128865 MiBを返し、runnerの実効memory制約を認識していなかった。
+
+圧縮cacheを2 GiB、workerを4に制限し、厳密な最小sizeを要件にしないためduplicate探索を無効化する。SquashFS size/SHA-256 sidecar検証は維持する。両クラスタの一時imageで同じoptionの生成を確認し、SGLangのuv.lockは固定しない。bash構文、actionlint、Ruff、81件の単体テスト、Gemini 3.7 Flashレビューを通した。Refs #7 #9 #11.', '[cluster:aspire2ap]')) || ((github.event_name == 'workflow_dispatch') && inputs.run_aspire2ap)))
+2026-08-21T05:41:39.9850000Z Result: true
+2026-08-21T05:41:39.9850000Z Evaluating aspire2ap.build-container.if
+2026-08-21T05:41:39.9850000Z Evaluating: (success() && ((needs.select-container.outputs.action == 'build')))
+2026-08-21T05:41:39.9850000Z Expanded: (true && ('build' == 'build'))
+2026-08-21T05:41:39.9850000Z Result: true
+2026-08-21T05:41:39.9860000Z Requested labels: self-hosted, aspire2p
+2026-08-21T05:41:39.9860000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot
+2026-08-21T05:41:39.9860000Z Reusable workflow chain:
+2026-08-21T05:41:39.9860000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:39.9860000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:39.9860000Z Waiting for a runner to pick up this job...
+2026-08-21T05:41:40.3850000Z Job is about to start running on the runner: a2ap-login01-3
+===== ASPIRE 2A+ _ OCIコンテナを選択/system.txt =====
+2026-08-21T05:41:19.0050000Z Evaluating aspire2ap.if
+2026-08-21T05:41:19.0050000Z Evaluating: (success() && (((((github.event_name == 'push') && contains(github.event.head_commit.message, '[cluster:aspire2ap]'))) || (((github.event_name == 'workflow_dispatch') && inputs.run_aspire2ap)))))
+2026-08-21T05:41:19.0050000Z Expanded: (true && ((('push' == 'push') && contains('[require-build] [cluster:aspire2ap] [nodes:1] SquashFS圧縮memoryを明示制限
+
+ASPIRE 2A+ run 32450435733ではBuildah cache、image検査、OCI push、Skopeo copy、umoci stat、VFS rootfs mountまで成功した後、mksquashfsが6%でexit 137となった。mksquashfs -mem-defaultはhost全体を基準に128865 MiBを返し、runnerの実効memory制約を認識していなかった。
+
+圧縮cacheを2 GiB、workerを4に制限し、厳密な最小sizeを要件にしないためduplicate探索を無効化する。SquashFS size/SHA-256 sidecar検証は維持する。両クラスタの一時imageで同じoptionの生成を確認し、SGLangのuv.lockは固定しない。bash構文、actionlint、Ruff、81件の単体テスト、Gemini 3.7 Flashレビューを通した。Refs #7 #9 #11.', '[cluster:aspire2ap]')) || ((github.event_name == 'workflow_dispatch') && inputs.run_aspire2ap)))
+2026-08-21T05:41:19.0050000Z Result: true
+2026-08-21T05:41:19.0050000Z Evaluating aspire2ap.select-container.if
+2026-08-21T05:41:19.0050000Z Evaluating: success()
+2026-08-21T05:41:19.0050000Z Result: true
+2026-08-21T05:41:19.3830000Z Requested labels: self-hosted, aspire2p
+2026-08-21T05:41:19.3830000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot
+2026-08-21T05:41:19.3830000Z Reusable workflow chain:
+2026-08-21T05:41:19.3830000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:19.3830000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire2ap.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:19.3830000Z Waiting for a runner to pick up this job...
+2026-08-21T05:41:19.3930000Z Job is about to start running on the runner: a2ap-login01-6
+===== 制御処理を検証 _ validate/system.txt =====
+2026-08-21T05:41:00.8950000Z Evaluating validate.if
+2026-08-21T05:41:00.8950000Z Evaluating: success()
+2026-08-21T05:41:00.8950000Z Result: true
+2026-08-21T05:41:00.8950000Z Evaluating validate.validate.if
+2026-08-21T05:41:00.8950000Z Evaluating: success()
+2026-08-21T05:41:00.8950000Z Result: true
+2026-08-21T05:41:01.3800000Z Requested labels: ubuntu-latest
+2026-08-21T05:41:01.3800000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/issue-7-oci-enroot
+2026-08-21T05:41:01.3800000Z Reusable workflow chain:
+2026-08-21T05:41:01.3800000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:01.3800000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/issue-7-oci-enroot (ab1f8862a5bdb7f6abef69ee629d255e8d9ca616)
+2026-08-21T05:41:01.3800000Z Waiting for a runner to pick up this job...
+2026-08-21T05:41:01.3990000Z Job is about to start running on the hosted runner: GitHub Actions 1000000333
+2026-08-21T05:41:01.3980000Z Job is waiting for a hosted runner to come online.

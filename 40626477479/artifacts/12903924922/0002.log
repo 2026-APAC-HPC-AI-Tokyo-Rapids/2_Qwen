@@ -1,0 +1,108 @@
+2026年 10月 29日 木曜日 14:36:24 UTC
+{
+  "commit": "95a94995352b8fe3e8ff756f488151a048f7aac3",
+  "kernel": "FA3 Decode merge diagnostic",
+  "calibration": true,
+  "scope": "one GPU, one B40 forward per candidate, no serving",
+  "candidates": [
+    {
+      "name": "p128split3-s3-fp8",
+      "block_n": 128,
+      "stages": 3,
+      "splits": 3,
+      "output": "fp8"
+    },
+    {
+      "name": "p128-merge-s3-fp8",
+      "block_n": 128,
+      "stages": 3,
+      "splits": 3,
+      "output": "fp8",
+      "merge": true,
+      "uneven": false
+    }
+  ],
+  "pins": {
+    "fa3": [
+      "sgl-project/sgl-attn",
+      "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"
+    ],
+    "cutlass": [
+      "NVIDIA/cutlass",
+      "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+      "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"
+    ]
+  },
+  "cuda_flags": [
+    "-O3",
+    "-std=c++17",
+    "--use_fast_math",
+    "--expt-relaxed-constexpr",
+    "--expt-extended-lambda",
+    "-lineinfo",
+    "-gencode=arch=compute_90a,code=sm_90a",
+    "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+    "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+    "-DNDEBUG",
+    "-Xptxas=-v,--warn-on-spills",
+    "-Xcompiler=-fPIC,-fvisibility=hidden,-fvisibility-inlines-hidden,-fno-gnu-unique",
+    "-D_GLIBCXX_USE_CXX11_ABI=1",
+    "-Dflash=apac_fa3_private",
+    "-DFlash_fwd_params=ApacFA3VerifyParams",
+    "-DFA3_DECODE_MERGE_PROBE=1",
+    "-ccbin",
+    "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+  ],
+  "cuda": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_May_27_02:21:03_PDT_2025\nCuda compilation tools, release 12.9, V12.9.86\nBuild cuda_12.9.r12.9/compiler.36037853_0\n",
+  "binary_sha256": "a58c55d942478d638e92b5fb755e430cd4303047fa13e4d9d2a5f7388af7c8c1",
+  "source_sha256": {
+    "kernels/fa3-verify/build.py": "af555a4f8ec722fbf6170a7b11ded217723cfbbe6355530550a89d151b6724ce",
+    "kernels/fa3-verify/candidates.json": "f3eb26f4b0ff1f5d34f4cb99baa341b063f39c8c2e284d0fed43c01df3653c0f",
+    "kernels/fa3-verify/combine.cu": "36fb258e9d14926fc83fa53fe2a01d7457b286d0230bfc7206ef2456fc942e00",
+    "kernels/fa3-verify/decode-merge.patch": "a75903bb859e04fb38787f90314594ea7a46295d9241955900ce61c146c8e80c",
+    "kernels/fa3-verify/decode_merge.cuh": "8372e36eb379107570fd77c767c0b186ce0f2bc0adab8802c0a4f8805f4218b2",
+    "kernels/fa3-verify/decode_prepare.cu": "40bf76b2277ba4d199438d1bbb1d6d56f78d154707eb038108ab8b4c7e543790",
+    "kernels/fa3-verify/decode_probe.cuh": "0a281c01184dd5d850ee3b6df0e949346800faf48b6c1a92be583aafa4c20f11",
+    "kernels/fa3-verify/fixed-prefill.patch": "7b2d8dac2fc834e5a3f7e28447ce44d15ec733b0c548e80b972d63e7c77c8771",
+    "kernels/fa3-verify/fixed-specializations.patch": "06cd67b34de21fd0344c9df7d7601726e994c06dd65651a32b71176bf11eec28",
+    "kernels/fa3-verify/merge_fp8.cuh": "019161f094be2f6463aab6eea4ef71967e83595d6dc44f0f7807b872f7a9cb1a",
+    "kernels/fa3-verify/p128split.cu": "1e6595ed78213732ffb363c342dd0b6b2a8e2ed00c434a1a23e7472510e0f5b7",
+    "kernels/fa3-verify/prefill-candidates.json": "491facf4ce7343b74101312e2aca4aafe504ee494677f7e58d8680b5b0f992b0",
+    "kernels/fa3-verify/prefill-overlap.patch": "802ebd46c2e9c001c2fba0086b157486968881131da6ddae228e78a9b8d24da5",
+    "kernels/fa3-verify/prefill-pv.patch": "71072ffbfac538dc768c88b9bfbc1958a6cba5e29d727ddd8c39b28ec9239106",
+    "kernels/fa3-verify/prefill-variants.patch": "0d00aaa1f63316cd88fb3b626a9f2060e9f018e3648ead05b550e632672ddf33",
+    "kernels/fa3-verify/prefill.cu": "dd133cfabc99f42cc64e8ea4e201e750c0ebeeed310bc528eaef647744026fe3",
+    "kernels/fa3-verify/prefill_fixed.cu": "5ce5e4278eeea65a40a407402d540e7317abd9a7df27ee5c2fd44e752d8e156f",
+    "kernels/fa3-verify/prefill_image.cu": "45388f8aaee9d04e7c31c5e76654ead970350ec69646cd10f597f9465da9f4e7",
+    "kernels/fa3-verify/prefill_layout.cuh": "39134662318fcb683b17c0128a259655a03b7841d6c25cd183603e6b0f23e1b7",
+    "kernels/fa3-verify/prefill_layout_host.cu": "46f1a0a7d3d404f30918b9a6504a36387cdd4a1e843bcf82cfbacbc821933d64",
+    "kernels/fa3-verify/prefill_v_layout.cuh": "fb25551098424acc34e35ae97a3c4f4f68c3787cc4c1686dcc0b05dc1c1512ee",
+    "kernels/fa3-verify/prefill_variant.cu": "9cc0936e1567bb047c64e74751501d773e5ac596bc9dbad838d5794a3edd39fd",
+    "kernels/fa3-verify/verify.h": "1deca27adcac7d653d4b2b010849fd31ba39ff5039769627bc8f09d3c8fa36a4",
+    "kernels/fa3-verify/wrapper.cpp": "617a25aa95d53ac764fccbfab8c001c7ff347b63001f9509da3787b1c233b6f0",
+    "kernels/probes/fa3-decode-merge-build.py": "6bcfe65f830ea394d2f1b95426135299750164a617d14717dc89ee1bc5832c4a",
+    "kernels/probes/fa3-decode-merge.cu": "c7c821978f63e04b35362a7c04fe18a9802fba9c14f5b15be1a60c9a2da2d6d3",
+    "kernels/probes/fa3-decode-merge.py": "b288b409e0672f183ddf449280af1c7b1269d219839d2f8b0cdb410ce19fc908",
+    "kernels/probes/prepare-fa3-decode-merge.sh": "4d17437f7c761e5a6eca01413f1bffa724dd502024347cb24f9fc89222f94655",
+    "kernels/probes/test-fa3-decode-merge.py": "49e95ebffd8a5553974b372d435a70bae4151e4709103036875ab96fd55c8e62",
+    "kernels/probes/fa3-fp8-output.patch": "4877ef00383957de6997352d6e04b6d3410abfffc511cb7c5cd2d503dd9ec32d",
+    "scripts/check-firmus-decode-kernels.py": "32f0634d6b1acce392251d238fa0db7baeb2ce8029eaccd52dd0f49ac88e8071"
+  }
+}
+trial=1
+/fast/PROJECT/sglang-runs/kernel-probe-40626477479-1.HyWbYB2G/enroot-system/hooks.d/10-shadow.sh: 70 行:   294 終了 1                yes 2> /dev/null
+       295 Segmentation fault      | pwck -R "${ENROOT_ROOTFS}" "${pwddb#${ENROOT_ROOTFS}}" /etc/shadow > /dev/null 2>&1
+first_divergence=records
+records: {"check": "merge.final_counters", "differing": 1, "first": [{"index": [0], "actual": "480", "expected": "0.0"}]}
+workspace: {"check": "partial_O", "differing": 3932083, "first": [{"index": [0, 0, 0, 0], "actual": "0.03636575", "expected": "0.035814088"}, {"index": [0, 0, 0, 1], "actual": "-0.019903727", "expected": "-0.015669286"}, {"index": [0, 0, 0, 2], "actual": "0.033141445", "expected": "0.015944798"}, {"index": [0, 0, 0, 3], "actual": "-0.0014861004", "expected": "-0.016689055"}, {"index": [0, 0, 0, 4], "actual": "0.016929561", "expected": "0.029246675"}], "coordinates": "split, Q head, token, dim"}
+workspace: {"check": "partial_LSE", "differing": 30689, "first": [{"index": [0, 0, 0], "actual": "7.2733665", "expected": "7.2653265"}, {"index": [0, 0, 1], "actual": "7.287737", "expected": "7.2846227"}, {"index": [0, 0, 2], "actual": "7.280367", "expected": "7.286536"}, {"index": [0, 0, 3], "actual": "7.294312", "expected": "7.302391"}, {"index": [0, 0, 4], "actual": "7.2861032", "expected": "7.2738743"}], "coordinates": "split, Q head, token"}
+merge_snapshot: {"check": "loaded_O_vs_own_workspace", "differing": 20480, "first": [{"index": [2, 0, 19, 0], "actual": "nan", "expected": "nan"}, {"index": [2, 0, 19, 1], "actual": "nan", "expected": "nan"}, {"index": [2, 0, 19, 2], "actual": "nan", "expected": "nan"}, {"index": [2, 0, 19, 3], "actual": "nan", "expected": "nan"}, {"index": [2, 0, 19, 4], "actual": "nan", "expected": "nan"}], "coordinates": "split, Q head, token, dim"}
+merged_fp32: {"check": "merge.host_merge", "differing": 20480, "first": [{"index": [7, 48, 0], "actual": "-0.017334834", "expected": "nan"}, {"index": [7, 48, 1], "actual": "0.015019315", "expected": "nan"}, {"index": [7, 48, 2], "actual": "0.0024133627", "expected": "nan"}, {"index": [7, 48, 3], "actual": "-0.028335847", "expected": "nan"}, {"index": [7, 48, 4], "actual": "0.010801809", "expected": "nan"}], "coordinates": "token, Q head, dim"}
+merged_fp32: {"check": "merged_O", "differing": 1310678, "first": [{"index": [0, 0, 0], "actual": "0.026074596", "expected": "0.022507777"}, {"index": [0, 0, 1], "actual": "-0.007896356", "expected": "-0.0007617393"}, {"index": [0, 0, 2], "actual": "0.0041551925", "expected": "-0.0018849842"}, {"index": [0, 0, 3], "actual": "-0.0005240108", "expected": "-0.0057991827"}, {"index": [0, 0, 4], "actual": "0.009728736", "expected": "0.0182455"}], "coordinates": "token, Q head, dim"}
+fp8_bytes_scales: {"check": "amax", "differing": 10240, "first": [{"index": [0, 0], "actual": "0.026074596", "expected": "0.022507777"}, {"index": [0, 1], "actual": "0.02520976", "expected": "0.02410013"}, {"index": [0, 2], "actual": "0.026339099", "expected": "0.024203813"}, {"index": [0, 3], "actual": "0.027987367", "expected": "0.026136478"}, {"index": [0, 4], "actual": "0.034006912", "expected": "0.022934662"}]}
+fp8_bytes_scales: {"check": "scales", "differing": 10071, "first": [{"index": [0, 0], "actual": "5.8202226e-05", "expected": "5.024058e-05"}, {"index": [0, 1], "actual": "5.627179e-05", "expected": "5.3794938e-05"}, {"index": [0, 2], "actual": "5.8792633e-05", "expected": "5.402637e-05"}, {"index": [0, 3], "actual": "6.24718e-05", "expected": "5.8340356e-05"}, {"index": [0, 4], "actual": "7.590829e-05", "expected": "5.1193445e-05"}]}
+fp8_bytes_scales: {"check": "FP8_bytes", "differing": 1262272, "first": [{"index": [0, 0, 1], "actual": "240", "expected": "215"}, {"index": [0, 0, 2], "actual": "105", "expected": "225"}, {"index": [0, 0, 3], "actual": "209", "expected": "238"}, {"index": [0, 0, 4], "actual": "114", "expected": "123"}, {"index": [0, 0, 5], "actual": "105", "expected": "113"}], "coordinates": "token, Q head, dim"}
+PASS kernel=fa3_decode_merge diagnostic_completed=true first_divergence=records
+2026年 10月 29日 木曜日 14:36:58 UTC
+probe_exit_code=0

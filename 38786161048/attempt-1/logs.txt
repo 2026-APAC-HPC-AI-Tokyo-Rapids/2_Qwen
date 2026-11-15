@@ -1,0 +1,67 @@
+
+===== 0_inspect.txt =====
+﻿2026-10-15T18:30:22.3121045Z Current runner version: '2.336.0'
+2026-10-15T18:30:22.3128235Z Runner name: 'home-lab-c744315f0816'
+2026-10-15T18:30:22.3129100Z Runner group name: 'default'
+2026-10-15T18:30:22.3130069Z Machine name: 'c744315f0816'
+2026-10-15T18:30:22.3133355Z ##[group]GITHUB_TOKEN Permissions
+2026-10-15T18:30:22.3135923Z Contents: read
+2026-10-15T18:30:22.3136510Z Metadata: read
+2026-10-15T18:30:22.3137287Z ##[endgroup]
+2026-10-15T18:30:22.3139700Z Secret source: Actions
+2026-10-15T18:30:22.3140634Z Cache mode: write
+2026-10-15T18:30:22.3141461Z Prepare workflow directory
+2026-10-15T18:30:22.3532154Z Prepare all required actions
+2026-10-15T18:30:22.3655467Z Complete job name: inspect
+2026-10-15T18:30:22.4639277Z ##[group]Run set -euo pipefail
+2026-10-15T18:30:22.4640179Z [36;1mset -euo pipefail[0m
+2026-10-15T18:30:22.4640873Z [36;1msource "${HOME}/.local/.setenv"[0m
+2026-10-15T18:30:22.4641610Z [36;1mdate -u +%FT%TZ[0m
+2026-10-15T18:30:22.4642658Z [36;1mimage=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers/38778072624.sqsh[0m
+2026-10-15T18:30:22.4643892Z [36;1mdirectory=$(mktemp -d)[0m
+2026-10-15T18:30:22.4644638Z [36;1mtrap 'rm -rf -- "${directory}"' EXIT[0m
+2026-10-15T18:30:22.4646286Z [36;1munsquashfs -ll "${image}" | awk '$NF ~ /nixl.*(libucp-|libnixl_common[.]so)/ {sub(/^squashfs-root\//,"",$NF); print $NF}' >"${directory}/libraries"[0m
+2026-10-15T18:30:22.4648118Z [36;1mtest -s "${directory}/libraries"[0m
+2026-10-15T18:30:22.4648891Z [36;1mwhile read -r library; do[0m
+2026-10-15T18:30:22.4649654Z [36;1m  printf '\nlibrary=%s\n' "${library}"[0m
+2026-10-15T18:30:22.4650751Z [36;1m  unsquashfs -cat "${image}" "${library}" >"${directory}/${library##*/}"[0m
+2026-10-15T18:30:22.4651869Z [36;1m  sha256sum "${directory}/${library##*/}"[0m
+2026-10-15T18:30:22.4654012Z [36;1m  if [[ "${library}" == *libucp-* ]]; then objdump -d --disassemble=ucp_get_version "${directory}/${library##*/}"; else strings "${directory}/${library##*/}" | grep -E '075b2397|git_hash|NIXL Version' || true; fi[0m
+2026-10-15T18:30:22.4656146Z [36;1mdone <"${directory}/libraries"[0m
+2026-10-15T18:30:22.4670213Z shell: /opt/actions-runner-shells/aspire2p-shell --github-shell {0}
+2026-10-15T18:30:22.4671524Z ##[endgroup]
+2026-10-15T18:30:27.0194414Z 2026-10-15T18:30:26Z
+2026-10-15T18:30:27.6195386Z 
+2026-10-15T18:30:27.6197301Z library=opt/sglang/venv/lib/python3.12/site-packages/.nixl_cu13.mesonpy.libs/libnixl_common.so
+2026-10-15T18:30:27.6479266Z d2fd1868d503a9ee51e84b1a89f78dece835913d2a395d0f944b40053ab598fd  /tmp/tmp.nYlFF9J5CS/libnixl_common.so
+2026-10-15T18:30:27.8450743Z 075b2397
+2026-10-15T18:30:27.8451487Z 
+2026-10-15T18:30:27.8453037Z library=opt/sglang/venv/lib/python3.12/site-packages/nixl_cu13.libs/libucp-b39b3ed9.so.0.0.0
+2026-10-15T18:30:27.8675327Z 0770acf18bb7617b5084ae29186dba097dce51f04a774bba0a2e75a5586a37bf  /tmp/tmp.nYlFF9J5CS/libucp-b39b3ed9.so.0.0.0
+2026-10-15T18:30:28.0919081Z 
+2026-10-15T18:30:28.0920861Z /tmp/tmp.nYlFF9J5CS/libucp-b39b3ed9.so.0.0.0:     file format elf64-x86-64
+2026-10-15T18:30:28.0922044Z 
+2026-10-15T18:30:28.0922075Z 
+2026-10-15T18:30:28.0922408Z Disassembly of section .init:
+2026-10-15T18:30:28.0922918Z 
+2026-10-15T18:30:28.0923283Z Disassembly of section .plt:
+2026-10-15T18:30:28.0923818Z 
+2026-10-15T18:30:28.0924229Z Disassembly of section .text:
+2026-10-15T18:30:28.0924736Z 
+2026-10-15T18:30:28.0925074Z 0000000000052cd0 <ucp_get_version@@Base>:
+2026-10-15T18:30:28.0927489Z    52cd0:	c7 07 01 00 00 00    	movl   $0x1,(%rdi)
+2026-10-15T18:30:28.0928762Z    52cd6:	c7 06 17 00 00 00    	movl   $0x17,(%rsi)
+2026-10-15T18:30:28.0929547Z    52cdc:	c7 02 00 00 00 00    	movl   $0x0,(%rdx)
+2026-10-15T18:30:28.0930283Z    52ce2:	c3                   	ret
+2026-10-15T18:30:28.0930694Z 
+2026-10-15T18:30:28.0930899Z Disassembly of section .fini:
+2026-10-15T18:30:30.6830121Z Cleaning up orphan processes
+
+===== inspect/system.txt =====
+2026-10-15T18:30:18.4360000Z Evaluating inspect.if
+2026-10-15T18:30:18.4360000Z Evaluating: success()
+2026-10-15T18:30:18.4360000Z Result: true
+2026-10-15T18:30:18.4390000Z Requested labels: self-hosted, home-lab
+2026-10-15T18:30:18.4390000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire-network-inspect.yml@refs/heads/perf/aspire-megamoe-port
+2026-10-15T18:30:18.4390000Z Waiting for a runner to pick up this job...
+2026-10-15T18:30:18.9140000Z Job is about to start running on the runner: home-lab-c744315f0816

@@ -1,0 +1,73 @@
+{
+  "schema": "fa3-exp-source/v1",
+  "pins": {
+    "fa3": {
+      "repository": "sgl-project/sgl-attn",
+      "commit": "f89bc2306632d1ec5f97b014dded4254f5b4a907",
+      "archive_sha256": "418b5681584dc3efff496a1cab5ffd58d2728d89dcfe0ea16e6985d6ef35c68c"
+    },
+    "cutlass": {
+      "repository": "NVIDIA/cutlass",
+      "commit": "57e3cfb47a2d9e0d46eb6335c3dc411498efa198",
+      "archive_sha256": "09237099a70f80bff1dc8bb80c843a674bb4fdcb46e43cc6993e711c5ca89bb5"
+    }
+  },
+  "patches": [
+    {
+      "path": "kernels/fa3-verify/fixed-specializations.patch",
+      "sha256": "06cd67b34de21fd0344c9df7d7601726e994c06dd65651a32b71176bf11eec28"
+    },
+    {
+      "path": "kernels/probes/fa3-fp8-output.patch",
+      "sha256": "4877ef00383957de6997352d6e04b6d3410abfffc511cb7c5cd2d503dd9ec32d"
+    },
+    {
+      "path": "kernels/fa3-verify/fixed-prefill.patch",
+      "sha256": "7b2d8dac2fc834e5a3f7e28447ce44d15ec733b0c548e80b972d63e7c77c8771"
+    },
+    {
+      "path": "kernels/fa3-verify/prefill-variants.patch",
+      "sha256": "0d00aaa1f63316cd88fb3b626a9f2060e9f018e3648ead05b550e632672ddf33"
+    },
+    {
+      "path": "kernels/fa3-verify/prefill-overlap.patch",
+      "sha256": "802ebd46c2e9c001c2fba0086b157486968881131da6ddae228e78a9b8d24da5"
+    },
+    {
+      "path": "kernels/fa3-verify/prefill-pv.patch",
+      "sha256": "71072ffbfac538dc768c88b9bfbc1958a6cba5e29d727ddd8c39b28ec9239106"
+    },
+    {
+      "path": "kernels/fa3-verify/decode-merge.patch",
+      "sha256": "f34f423318d7e839d8eb264921d830c881a42c34357fc62b7f38f743c850a5bb"
+    }
+  ],
+  "experiment_patch": {
+    "path": "kernels/probes/fa3-prefill-exp.patch",
+    "sha256": "175ac3e8554cbf06bd45788d8ab6bcfa4c3912a97af9ca71d5eac29b6a51048b"
+  },
+  "softmax_control_sha256": "24edd56147c62c779b6dfea518d2abae99b2da8a53406259ee3d96b26b486095",
+  "softmax_patched_sha256": "0f919c0b4724c550e4fe6d62df0a8740e849886ff4a627c494025f0d43e2e681",
+  "pinned_native_sha256": "8b220e5148cf37039615bf6f1a78daaf22150df38efe2ea5ac81f81cb43c0c04",
+  "manifest_sha256": "8fc0c75606e7178fa15362f71e5d5c6379d48e3d8fdc2e2df34c96c78a5bfb7a",
+  "image_source_sha_verified": true,
+  "variants": {
+    "control": {
+      "macro": "default",
+      "binary_sha256": "b906de677c47f26c105838109a077c518ae346cafae5740d59e8802be8ac8429",
+      "resource": "fa3_exp_resource M=128 N=224 fixed=1 variant=0 smem=191488\n",
+      "ptxas": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE', 72 bytes spill stores, 120 bytes spill loads\nptxas info    : 27 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE\n    40 bytes stack frame, 72 bytes spill stores, 120 bytes spill loads\nptxas info    : Used 168 registers, used 16 barriers, 40 bytes cumulative stack size\nptxas info    : Compile time = 588.518 ms\n"
+    },
+    "poly": {
+      "macro": "APAC_FA3_PREFILL_EXP_POLY=1",
+      "binary_sha256": "676decce965690307f46fbac1c6056a5ab0ba06ea61049ce748bb2af0ac0cd88",
+      "resource": "fa3_exp_resource M=128 N=224 fixed=1 variant=0 smem=191488\n",
+      "ptxas": "ptxas warning : Registers are spilled to local memory in function '_ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE', 72 bytes spill stores, 120 bytes spill loads\nptxas info    : 27 bytes gmem\nptxas info    : Compiling entry function '_ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE' for 'sm_90a'\nptxas info    : Function properties for _ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1ELi0EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1ELb1ELb0EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE\n    40 bytes stack frame, 72 bytes spill stores, 120 bytes spill loads\nptxas info    : Used 168 registers, used 16 barriers, 40 bytes cumulative stack size\nptxas info    : Compile time = 591.903 ms\n"
+    }
+  },
+  "gpu_executed": false,
+  "commit": "9deda82b1567e3cf77bfd1d217827b0775fa592c",
+  "kernel": "FA3 fixed Prefill exp polynomial",
+  "scope": "one GPU numerical-quality gate; approximate candidate",
+  "calibration": false
+}

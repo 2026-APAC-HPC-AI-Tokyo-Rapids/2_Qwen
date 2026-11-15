@@ -1,0 +1,18 @@
+# Actions run 39018872189
+
+[require-build] [cluster:firmus] [nodes:2] [profile] Measure the warp…
+
+Workflow: Qwen
+Status: completed; conclusion: success
+Created: 2026-10-17T08:50:28Z
+Recorded source commit: `108b314c7501f2f30b19842ec01e97cfcad34bcd`
+
+Logs are preserved as sanitized text. Server paths, account identifiers and private references were replaced; the complete original is held in the private publication backup.
+
+## Log attempts
+
+- [Attempt 1](attempt-1/logs.txt)
+
+## Artifacts
+
+No hosted artifact was available at the publication snapshot.

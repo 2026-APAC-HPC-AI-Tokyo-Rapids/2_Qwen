@@ -1,0 +1,879 @@
+/opt/sglang/source/python/sglang/launch_server.py:56: UserWarning: 'python -m sglang.launch_server' is still supported, but 'sglang serve' is the recommended entrypoint.
+  Example: sglang serve --model-path <model> [options]
+  warnings.warn(
+[1;33m'--disable-cuda-graph' is deprecated and will be removed in a future release. Use '--cuda-graph-backend-{decode,prefill}=disabled' instead.[0m
+[2026-10-16 01:39:33] DP attention is enabled. chunked prefill size is adjusted from 16384 to 4096.
+[2026-10-16 01:39:33] Mega MoE is enabled. The expert parallel size is adjusted to be the same as the tensor parallel size[4].
+[2026-10-16 01:39:34] server_args=ServerArgs(model_path='/model', tokenizer_path='/model', tokenizer_mode='auto', tokenizer_backend='huggingface', tokenizer_worker_num=1, detokenizer_worker_num=1, skip_tokenizer_init=False, load_format='auto', model_loader_extra_config='{}', trust_remote_code=True, context_length=8192, is_embedding=False, enable_multimodal=None, revision=None, model_impl='auto', model_config_parser='auto', json_model_override_args='{}', dtype='auto', quantization=None, quantization_param_path=None, kv_cache_dtype='fp8_e4m3', enable_fp32_lm_head=False, modelopt_quant=None, modelopt_checkpoint_restore_path=None, modelopt_checkpoint_save_path=None, modelopt_export_path=None, quantize_and_serve=False, rl_quant_profile=None, enable_tf32_matmul=False, mem_fraction_static=0.9, max_running_requests=64, max_queued_requests=None, max_total_tokens=32768, chunked_prefill_size=4096, enable_dynamic_chunking=False, max_prefill_tokens=16384, prefill_max_requests=None, schedule_policy='fcfs', enable_priority_scheduling=False, disable_priority_preemption=False, default_priority_value=None, abort_on_priority_when_disabled=False, schedule_low_priority_values_first=False, priority_scheduling_preemption_threshold=10, retraction_policy='length', schedule_conservativeness=0.3, page_size=64, swa_full_tokens_ratio=0.8, disable_hybrid_swa_memory=False, radix_eviction_policy='lru', prefill_only_disable_kv_cache=False, disable_radix_cache=False, enable_page_major_kv_layout=False, enable_unified_memory=False, disable_chunked_prefix_cache=False, disable_overlap_schedule=False, num_continuous_decode_steps=1, scheduler_recv_interval=1, enable_mixed_chunk=False, nccl_port=31100, dist_timeout=None, dist_init_addr='127.0.0.1:32000', nnodes=1, node_rank=0, tp_size=4, dcp_size=1, pp_size=1, pp_max_micro_batch_size=None, pp_async_batch_depth=0, dp_size=4, load_balance_method='total_requests', attn_cp_size=1, moe_dp_size=1, dwdp_size=1, dcp_comm_backend='ag_rs', dcp_replicate_q_proj=None, enable_prefill_cp=False, cp_strategy=None, enable_dsa_cache_layer_split=False, enable_dsa_prefill_context_parallel=False, dsa_prefill_cp_mode='round-robin-split', enable_prefill_context_parallel=False, prefill_cp_mode='in-seq-split', enable_cp_decode_attn_tp=False, enable_dp_attention=True, enable_dp_attention_local_control_broadcast=False, enable_dp_lm_head=False, enable_attn_tp_input_scattered=False, disable_attn_tp_gather=False, enable_p2p_check=False, device='cuda', base_gpu_id=0, gpu_id_step=1, random_seed=115530187, watchdog_timeout=300, soft_watchdog_timeout=None, sleep_on_idle=False, use_ray=False, custom_sigquit_handler=None, numa_node=None, gc_threshold=None, host='0.0.0.0', port=30100, fastapi_root_path='', smg_grpc_mode=False, grpc_mode=False, grpc_port=None, sidecar=None, sidecar_args=None, skip_server_warmup=False, warmups=None, enable_http2=False, ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_keyfile_password=None, enable_ssl_refresh=False, api_key=None, admin_api_key=None, served_model_name='qwen', weight_version='default', chat_template=None, hf_chat_template_name=None, completion_template=None, file_storage_path='sglang_storage', enable_cache_report=False, reasoning_parser=None, default_chat_template_kwargs=None, strip_thinking_cache=False, enable_strict_thinking=False, tool_call_parser=None, tool_server=None, sampling_defaults='model', asr_max_buffer_seconds=60, asr_max_concurrent_sessions=32, preferred_sampling_params=None, allow_auto_truncate=False, stream_interval=1, batch_notify_size=16, stream_response_default_include_usage=False, incremental_streaming_output=False, enable_streaming_session=False, enable_session_radix_cache=False, log_level='info', log_level_http=None, log_requests=False, log_requests_level=2, log_requests_format='text', log_requests_target=None, uvicorn_access_log_exclude_prefixes=[], crash_dump_folder=None, show_time_cost=False, enable_metrics=False, smg_http_sidecar_port=None, enable_mfu_metrics=False, enable_metrics_for_all_schedulers=False, load_snapshot_publish_interval=1, tokenizer_metrics_custom_labels_header='x-custom-labels', tokenizer_metrics_allowed_custom_labels=None, extra_metric_labels=None, bucket_time_to_first_token=None, bucket_inter_token_latency=None, bucket_e2e_request_latency=None, prompt_tokens_buckets=None, generation_tokens_buckets=None, gc_warning_threshold_secs=0.0, decode_log_interval=40, enable_request_time_stats_logging=False, kv_events_config=None, enable_forward_pass_metrics=False, forward_pass_metrics_worker_id='', forward_pass_metrics_ipc_name=None, enable_trace=False, trace_modules='request', otlp_traces_endpoint='localhost:4317', export_metrics_to_file=False, export_metrics_to_file_dir=None, stat_loggers=None, constrained_json_whitespace_pattern=None, constrained_json_disable_any_whitespace=False, attention_backend='fa3', decode_attention_backend=None, prefill_attention_backend=None, sampling_backend='flashinfer', grammar_backend='xgrammar', radix_cache_backend=None, mm_attention_backend=None, fp8_gemm_runner_backend='auto', fp4_gemm_runner_backend='auto', bf16_gemm_backend='auto', dsa_prefill_backend=None, dsa_decode_backend=None, dsa_paged_mqa_logits_backend='auto', dsa_topk_backend='sgl-kernel', disable_flashinfer_autotune=False, flashinfer_autotune_skip_ops=None, mamba_backend='triton', cuda_graph_config=CudaGraphConfig(decode=PhaseConfig(backend='disabled', max_bs=512, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 40, 44, 48, 52, 56, 60, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], tc_compiler='eager', full_prefill_max_req=None, full_prefill_prefix_chunk_tokens=None), prefill=PhaseConfig(backend='disabled', max_bs=8192, bs=[4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192], tc_compiler='eager', full_prefill_max_req=None, full_prefill_prefix_chunk_tokens=None)), cuda_graph_backend_decode=None, cuda_graph_backend_prefill=None, cuda_graph_max_bs_decode=None, cuda_graph_max_bs_prefill=None, cuda_graph_bs_decode=None, cuda_graph_bs_prefill=None, cuda_graph_tc_compiler=None, disable_prefill_cuda_graph=False, disable_decode_cuda_graph=False, disable_cuda_graph=True, disable_cuda_graph_padding=False, enable_profile_cuda_graph=False, enable_cudagraph_gc=False, debug_cuda_graph=False, enable_layerwise_nvtx_marker=False, enable_nccl_nvls=False, enable_symm_mem=False, triton_attention_reduce_in_fp32=False, triton_attention_num_kv_splits=8, triton_attention_split_tile_size=None, flashinfer_mla_disable_ragged=False, enable_fused_qk_norm_rope=False, enable_precise_embedding_interpolation=False, enable_fused_moe_sum_all_reduce=False, enable_deepseek_v4_fp4_indexer=False, disable_custom_all_reduce=False, enable_mscclpp=False, enable_torch_symm_mem=False, enable_scattered_sconv=False, pre_warm_nccl=False, enable_quant_communications=False, enable_flashinfer_allreduce_fusion=False, enforce_disable_flashinfer_allreduce_fusion=False, flashinfer_allreduce_fusion_backend=None, enable_aiter_allreduce_fusion=False, enable_torch_compile=False, enable_torch_compile_debug_mode=False, torch_compile_max_bs=32, torchao_config='', speculative_algorithm='EAGLE3', speculative_draft_model_path='/draft', speculative_draft_model_revision='main', speculative_draft_load_format=None, speculative_num_steps=3, speculative_eagle_topk=1, speculative_num_draft_tokens=4, speculative_dflash_block_size=None, speculative_dspark_block_size=None, speculative_dspark_sps_table_path=None, speculative_dspark_confidence_sts_path=None, speculative_dspark_align_verify_tokens_to_graph_tier=False, speculative_accept_threshold_single=1.0, speculative_accept_threshold_acc=1.0, speculative_use_rejection_sampling=False, speculative_token_map=None, speculative_attention_mode='prefill', speculative_draft_attention_backend=None, speculative_draft_window_size=None, speculative_moe_runner_backend='deep_gemm', speculative_moe_a2a_backend=None, speculative_draft_model_quantization=None, speculative_skip_dp_mlp_sync=False, enable_multi_layer_eagle=False, speculative_adaptive=False, speculative_adaptive_config=None, decoupled_spec_bind_endpoint=None, decoupled_spec_connect_endpoints=None, decoupled_spec_rank=None, decoupled_spec_role='null', spec_trace_dir=None, speculative_ngram_min_bfs_breadth=1, speculative_ngram_max_bfs_breadth=10, speculative_ngram_match_type='BFS', speculative_ngram_max_trie_depth=18, speculative_ngram_capacity=10000000, speculative_ngram_external_corpus_path=None, speculative_ngram_external_sam_budget=0, speculative_ngram_external_corpus_max_tokens=10000000, ep_size=4, moe_a2a_backend='megamoe', moe_runner_backend='deep_gemm', flashinfer_mxfp4_moe_precision='default', deepep_mode='auto', fuseep_mode=2, deepep_dispatcher_output_dtype='auto', ep_num_redundant_experts=0, ep_dispatch_algorithm=None, init_expert_location='trivial', enable_eplb=False, eplb_algorithm='auto', eplb_rebalance_num_iterations=1000, eplb_rebalance_layers_per_chunk=None, eplb_min_rebalancing_utilization_threshold=1.0, expert_distribution_recorder_mode=None, expert_distribution_recorder_buffer_size=1000, enable_expert_distribution_metrics=False, deepep_config=None, moe_dense_tp_size=None, elastic_ep_backend=None, enable_elastic_expert_backup=False, mooncake_ib_device=None, enable_waterfill=False, ep_join_mode=None, ep_join_rank_offset=0, elastic_ep_initial_size=None, max_ep_size=None, elastic_ep_scale_timeout=600, elastic_ep_rejoin=False, disable_flashinfer_cutlass_moe_fp4_allgather=False, disable_shared_experts_fusion=False, enforce_shared_experts_fusion=False, max_mamba_cache_size=None, mamba_ssm_dtype=None, mamba_max_states_per_path=-1, enable_mamba_cache_stochastic_rounding=False, mamba_cache_philox_rounds=0, mamba_full_memory_ratio=0.9, mamba_radix_cache_strategy='auto', uses_mamba_radix_cache=False, mamba_track_interval=256, enable_int8_mamba_checkpoint=False, int8_mamba_ckpt_size=None, linear_attn_backend='triton', linear_attn_decode_backend=None, linear_attn_prefill_backend=None, enable_linear_replayssm=False, linear_replayssm_cache_len=16, enable_gdn_replayssm_spec=False, enable_hierarchical_cache=False, hicache_ratio=2.0, hicache_size=0, hicache_write_policy='write_through', hicache_io_backend='kernel', hicache_mem_layout='page_first', hicache_storage_backend=None, hicache_storage_prefetch_policy='timeout', hicache_storage_backend_extra_config=None, enable_hisparse=False, hisparse_config=None, enable_broadcast_mm_inputs_process=False, enable_prefix_mm_cache=False, mm_enable_dp_encoder=False, mm_process_config={}, mm_processor_worker_num=0, mm_io_worker_num=0, limit_mm_data_per_request=None, enable_mm_global_cache=False, disable_fast_image_processor=False, mm_feature_transport='cpu', keep_mm_feature_on_device=False, enable_lora=None, enable_lora_overlap_loading=None, max_lora_rank=None, lora_target_modules=None, lora_paths=None, max_loaded_loras=None, max_loras_per_batch=8, lora_eviction_policy='lru', lora_backend='csgmv', max_lora_chunk_size=16, experts_shared_outer_loras=None, lora_use_virtual_experts=False, lora_strict_loading=False, lora_drain_wait_threshold=0.0, enable_two_batch_overlap=False, enable_single_batch_overlap=False, tbo_token_distribution_threshold=0.48, cpu_offload_gb=0, offload_group_size=-1, offload_num_in_group=1, offload_prefetch_step=1, offload_mode='cpu', enable_lmcache=False, lmcache_config_file=None, enable_flexkv=False, flexkv_config_file=None, kt_weight_path=None, kt_method='AMXINT4', kt_cpuinfer=None, kt_threadpool_count=2, kt_num_gpu_experts=None, kt_max_deferred_experts_per_token=None, dllm_algorithm=None, dllm_algorithm_config=None, dllm_fdfo=True, disaggregation_mode='prefill', disaggregation_transfer_backend='nixl', disaggregation_bootstrap_port=9000, disaggregation_ib_device=None, disaggregation_decode_enable_radix_cache=False, disaggregation_decode_enable_offload_kvcache=False, num_reserved_decode_tokens=512, disaggregation_decode_extra_slots=None, disaggregation_decode_polling_interval=1, optimistic_prefill_attempts=0, encoder_only=False, language_only=False, encoder_transfer_backend='zmq_to_scheduler', encoder_urls=[], encoder_bootstrap_port=8997, encoder_register_urls=[], enable_adaptive_dispatch_to_encoder=False, enable_pdmux=False, pdmux_config_path=None, sm_group_num=8, custom_weight_loader=[], weight_loader_disable_mmap=False, weight_loader_prefetch_checkpoints=False, weight_loader_prefetch_num_threads=4, weight_loader_drop_cache_after_load=False, remote_instance_weight_loader_seed_instance_ip=None, remote_instance_weight_loader_seed_instance_service_port=None, remote_instance_weight_loader_send_weights_group_ports=None, remote_instance_weight_loader_backend='nccl', remote_instance_weight_loader_start_seed_via_transfer_engine=False, engine_info_bootstrap_port=6789, modelexpress_config=None, download_dir=None, model_checksum=None, delete_ckpt_after_loading=False, decrypted_config_file=None, decrypted_draft_config_file=None, checkpoint_engine_wait_weights_before_ready=False, enable_prefill_delayer=False, prefill_delayer_max_delay_passes=30, prefill_delayer_token_usage_low_watermark=None, prefill_delayer_forward_passes_buckets=None, prefill_delayer_wait_seconds_buckets=None, prefill_delayer_queue_min_ratio=None, prefill_delayer_max_delay_ms=None, min_free_slots_delay=None, enable_deterministic_inference=False, rl_on_policy_target=None, kv_canary='none', kv_canary_real_data='none', kv_canary_sweep_interval=0, enable_dynamic_batch_tokenizer=False, dynamic_batch_tokenizer_batch_size=32, dynamic_batch_tokenizer_batch_timeout=0.002, enable_tokenizer_batch_encode=False, disable_tokenizer_batch_decode=False, debug_tensor_dump_output_folder=None, debug_tensor_dump_layers=None, debug_tensor_dump_input_file=None, enable_memory_saver=False, enable_weights_cpu_backup=False, enable_draft_weights_cpu_backup=False, enable_custom_logit_processor=False, enable_return_hidden_states=False, enable_return_routed_experts=False, enable_return_indexer_topk=False, disable_outlines_disk_cache=False, enable_mis=False, weight_cache_mode='off', weight_cache_socket=None, weight_cache_timeout=1800, forward_hooks=None, msprobe_dump_config=None)
+[2026-10-16 01:39:36] Using default HuggingFace chat template with detected content format: string
+[2026-10-16 01:39:36] CommonKVBootstrapServer started successfully on 0.0.0.0:9000
+[2026-10-16 01:40:08 DP0 TP0 EP0] Failed to load generation config for /draft: /draft does not appear to have a file named generation_config.json. Checkout 'https://huggingface.co//draft/tree/main' for available files.. Proceeding without generation config.
+[2026-10-16 01:40:08 DP1 TP1 EP1] Failed to load generation config for /draft: /draft does not appear to have a file named generation_config.json. Checkout 'https://huggingface.co//draft/tree/main' for available files.. Proceeding without generation config.
+[2026-10-16 01:40:08 DP3 TP3 EP3] Failed to load generation config for /draft: /draft does not appear to have a file named generation_config.json. Checkout 'https://huggingface.co//draft/tree/main' for available files.. Proceeding without generation config.
+[2026-10-16 01:40:08 DP2 TP2 EP2] Failed to load generation config for /draft: /draft does not appear to have a file named generation_config.json. Checkout 'https://huggingface.co//draft/tree/main' for available files.. Proceeding without generation config.
+[2026-10-16 01:40:09 DP2 TP2 EP2] Init torch distributed begin.
+[2026-10-16 01:40:09 DP1 TP1 EP1] Init torch distributed begin.
+[2026-10-16 01:40:09 DP0 TP0 EP0] Init torch distributed begin.
+[2026-10-16 01:40:09 DP3 TP3 EP3] Init torch distributed begin.
+[2026-10-16 01:40:10 DP0 TP0 EP0] sglang is using nccl==2.28.9
+[2026-10-16 01:40:12 DP0 TP0 EP0] All Reduce config: symmetric_memory = 23.01 MB, local_buffer = 4.00 MB, multicast = True
+[2026-10-16 01:40:12 DP0 TP0 EP0] Init torch distributed ends. elapsed=2.68 s, mem usage=1.25 GB
+[2026-10-16 01:40:12 DP3 TP3 EP3] Init torch distributed ends. elapsed=2.65 s, mem usage=1.07 GB
+[2026-10-16 01:40:12 DP2 TP2 EP2] Init torch distributed ends. elapsed=2.73 s, mem usage=1.30 GB
+[2026-10-16 01:40:12 DP1 TP1 EP1] Init torch distributed ends. elapsed=2.71 s, mem usage=1.30 GB
+[2026-10-16 01:40:15 DP1 TP1 EP1] Load weight begin. avail mem=77.33 GB
+[2026-10-16 01:40:15 DP0 TP0 EP0] Load weight begin. avail mem=77.38 GB
+[2026-10-16 01:40:15 DP2 TP2 EP2] Load weight begin. avail mem=77.33 GB
+[2026-10-16 01:40:15 DP3 TP3 EP3] Load weight begin. avail mem=77.57 GB
+[2026-10-16 01:40:15 DP0 TP0 EP0] Detected fp8 checkpoint.
+[2026-10-16 01:40:15 DP1 TP1 EP1] FlashInfer TRTLLM MoE deferred finalize is disabled (moe_runner_backend=deep_gemm, quant_method=Fp8MoEMethod).
+[2026-10-16 01:40:15 DP3 TP3 EP3] FlashInfer TRTLLM MoE deferred finalize is disabled (moe_runner_backend=deep_gemm, quant_method=Fp8MoEMethod).
+[2026-10-16 01:40:15 DP2 TP2 EP2] FlashInfer TRTLLM MoE deferred finalize is disabled (moe_runner_backend=deep_gemm, quant_method=Fp8MoEMethod).
+[2026-10-16 01:40:15 DP0 TP0 EP0] FlashInfer TRTLLM MoE deferred finalize is disabled (moe_runner_backend=deep_gemm, quant_method=Fp8MoEMethod).
+Multi-thread loading shards:   0% Completed | 0/24 [00:00<?, ?it/s]Multi-thread loading shards:   4% Completed | 1/24 [00:01<00:45,  2.00s/it]Multi-thread loading shards:   8% Completed | 2/24 [00:02<00:25,  1.17s/it]Multi-thread loading shards:  12% Completed | 3/24 [00:03<00:18,  1.13it/s]Multi-thread loading shards:  17% Completed | 4/24 [00:03<00:14,  1.34it/s]Multi-thread loading shards:  21% Completed | 5/24 [00:04<00:12,  1.49it/s]Multi-thread loading shards:  25% Completed | 6/24 [00:04<00:11,  1.61it/s]Multi-thread loading shards:  29% Completed | 7/24 [00:05<00:10,  1.60it/s]Multi-thread loading shards:  33% Completed | 8/24 [00:05<00:09,  1.68it/s]Multi-thread loading shards:  38% Completed | 9/24 [00:06<00:09,  1.64it/s]Multi-thread loading shards:  42% Completed | 10/24 [00:07<00:08,  1.66it/s]Multi-thread loading shards:  46% Completed | 11/24 [00:07<00:07,  1.73it/s]Multi-thread loading shards:  50% Completed | 12/24 [00:08<00:06,  1.80it/s]Multi-thread loading shards:  54% Completed | 13/24 [00:08<00:06,  1.82it/s]Multi-thread loading shards:  58% Completed | 14/24 [00:09<00:05,  1.83it/s]Multi-thread loading shards:  62% Completed | 15/24 [00:09<00:04,  1.87it/s]Multi-thread loading shards:  67% Completed | 16/24 [00:10<00:04,  1.90it/s]Multi-thread loading shards:  71% Completed | 17/24 [00:10<00:03,  1.92it/s]Multi-thread loading shards:  75% Completed | 18/24 [00:11<00:03,  1.89it/s]Multi-thread loading shards:  79% Completed | 19/24 [00:11<00:02,  1.89it/s]Multi-thread loading shards:  83% Completed | 20/24 [00:12<00:02,  1.90it/s]Multi-thread loading shards:  88% Completed | 21/24 [00:12<00:01,  1.83it/s]Multi-thread loading shards:  92% Completed | 22/24 [00:13<00:01,  1.84it/s]Multi-thread loading shards:  96% Completed | 23/24 [00:13<00:00,  1.87it/s][2026-10-16 01:40:30 DP2 TP2 EP2] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:31 DP2 TP2 EP2] Load weight end. elapsed=15.60 s, type=Qwen3MoeForCausalLM, quant=fp8, fmt=e4m3, avail mem=16.48 GB, mem usage=60.86 GB.
+Multi-thread loading shards: 100% Completed | 24/24 [00:14<00:00,  2.10it/s]Multi-thread loading shards: 100% Completed | 24/24 [00:14<00:00,  1.67it/s]
+[2026-10-16 01:40:31 DP0 TP0 EP0] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:31 DP1 TP1 EP1] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:31 DP3 TP3 EP3] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:31 DP0 TP0 EP0] Load weight end. elapsed=15.85 s, type=Qwen3MoeForCausalLM, quant=fp8, fmt=e4m3, avail mem=16.52 GB, mem usage=60.86 GB.
+[2026-10-16 01:40:31 DP1 TP1 EP1] Load weight end. elapsed=15.85 s, type=Qwen3MoeForCausalLM, quant=fp8, fmt=e4m3, avail mem=16.48 GB, mem usage=60.86 GB.
+[2026-10-16 01:40:31 DP3 TP3 EP3] Load weight end. elapsed=15.86 s, type=Qwen3MoeForCausalLM, quant=fp8, fmt=e4m3, avail mem=16.71 GB, mem usage=60.86 GB.
+[2026-10-16 01:40:32 DP3 TP3 EP3] Init torch distributed begin.
+[2026-10-16 01:40:32 DP0 TP0 EP0] Init torch distributed begin.
+[2026-10-16 01:40:32 DP1 TP1 EP1] Init torch distributed begin.
+[2026-10-16 01:40:32 DP2 TP2 EP2] Init torch distributed begin.
+[2026-10-16 01:40:32 DP0 TP0 EP0] Init torch distributed ends. elapsed=0.00 s, mem usage=0.00 GB
+[2026-10-16 01:40:32 DP3 TP3 EP3] Init torch distributed ends. elapsed=0.00 s, mem usage=0.00 GB
+[2026-10-16 01:40:32 DP2 TP2 EP2] Init torch distributed ends. elapsed=0.00 s, mem usage=0.00 GB
+[2026-10-16 01:40:32 DP0 TP0 EP0] Load weight begin. avail mem=16.52 GB
+[2026-10-16 01:40:32 DP1 TP1 EP1] Init torch distributed ends. elapsed=0.00 s, mem usage=0.00 GB
+[2026-10-16 01:40:32 DP3 TP3 EP3] Load weight begin. avail mem=16.71 GB
+[2026-10-16 01:40:32 DP1 TP1 EP1] Load weight begin. avail mem=16.48 GB
+[2026-10-16 01:40:32 DP2 TP2 EP2] Load weight begin. avail mem=16.48 GB
+Multi-thread loading shards:   0% Completed | 0/1 [00:00<?, ?it/s]Multi-thread loading shards: 100% Completed | 1/1 [00:03<00:00,  3.89s/it]Multi-thread loading shards: 100% Completed | 1/1 [00:03<00:00,  3.89s/it]
+[2026-10-16 01:40:36 DP3 TP3 EP3] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:36 DP3 TP3 EP3] Load weight end. elapsed=3.94 s, type=LlamaForCausalLMEagle3, avail mem=14.48 GB, mem usage=2.23 GB.
+[2026-10-16 01:40:36 DP0 TP0 EP0] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:36 DP0 TP0 EP0] Load weight end. elapsed=3.97 s, type=LlamaForCausalLMEagle3, avail mem=14.30 GB, mem usage=2.23 GB.
+[2026-10-16 01:40:36 DP1 TP1 EP1] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:36 DP2 TP2 EP2] Using FP8 KV cache but no scaling factors provided. Defaulting to scaling factors of 1.0. This may lead to less accurate results!
+[2026-10-16 01:40:36 DP1 TP1 EP1] Load weight end. elapsed=3.97 s, type=LlamaForCausalLMEagle3, avail mem=14.25 GB, mem usage=2.23 GB.
+[2026-10-16 01:40:36 DP2 TP2 EP2] Load weight end. elapsed=3.97 s, type=LlamaForCausalLMEagle3, avail mem=14.25 GB, mem usage=2.23 GB.
+[2026-10-16 01:40:38 DP1 TP1 EP1] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 1.47 GB, V size: 1.47 GB
+[2026-10-16 01:40:38 DP2 TP2 EP2] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 1.47 GB, V size: 1.47 GB
+[2026-10-16 01:40:38 DP3 TP3 EP3] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 1.47 GB, V size: 1.47 GB
+[2026-10-16 01:40:38 DP0 TP0 EP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 1.47 GB, V size: 1.47 GB
+[2026-10-16 01:40:38 DP1 TP1 EP1] Memory pool end. avail mem=10.98 GB
+[2026-10-16 01:40:38 DP2 TP2 EP2] Memory pool end. avail mem=10.98 GB
+[2026-10-16 01:40:38 DP3 TP3 EP3] Memory pool end. avail mem=11.21 GB
+[2026-10-16 01:40:38 DP0 TP0 EP0] Memory pool end. avail mem=11.03 GB
+[2026-10-16 01:40:38 DP1 TP1 EP1] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 0.02 GB, V size: 0.02 GB
+[2026-10-16 01:40:38 DP1 TP1 EP1] Memory pool end. avail mem=10.94 GB
+[2026-10-16 01:40:38 DP3 TP3 EP3] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 0.02 GB, V size: 0.02 GB
+[2026-10-16 01:40:38 DP2 TP2 EP2] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 0.02 GB, V size: 0.02 GB
+[2026-10-16 01:40:38 DP3 TP3 EP3] Memory pool end. avail mem=11.18 GB
+[2026-10-16 01:40:38 DP2 TP2 EP2] Memory pool end. avail mem=10.94 GB
+[2026-10-16 01:40:38 DP0 TP0 EP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 32768, K size: 0.02 GB, V size: 0.02 GB
+[2026-10-16 01:40:38 DP0 TP0 EP0] Memory pool end. avail mem=10.99 GB
+[2026-10-16 01:40:38 DP0 TP0 EP0] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP3 TP3 EP3] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP1 TP1 EP1] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP2 TP2 EP2] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP2 TP2 EP2] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP0 TP0 EP0] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP3 TP3 EP3] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP1 TP1 EP1] Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+[2026-10-16 01:40:38 DP0 TP0 EP0] max_total_num_tokens=32768, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=16, context_len=8192, available_gpu_mem=12.05 GB
+[2026-10-16 01:40:38 DP3 TP3 EP3] Tree cache initialized: source=default impl=RadixCache hybrid_swa=False hybrid_ssm=False hierarchical=False streaming_wrapped=False
+[2026-10-16 01:40:38 DP1 TP1 EP1] Tree cache initialized: source=default impl=RadixCache hybrid_swa=False hybrid_ssm=False hierarchical=False streaming_wrapped=False
+[2026-10-16 01:40:38 DP0 TP0 EP0] Tree cache initialized: source=default impl=RadixCache hybrid_swa=False hybrid_ssm=False hierarchical=False streaming_wrapped=False
+[2026-10-16 01:40:38 DP2 TP2 EP2] Tree cache initialized: source=default impl=RadixCache hybrid_swa=False hybrid_ssm=False hierarchical=False streaming_wrapped=False
+2026-10-16 01:40:38 NIXL INFO    _api.py:281 Initialized NIXL agent: 7a3e1bfe-f926-4aaa-b062-1a9554c005f2
+2026-10-16 01:40:38 NIXL INFO    _api.py:281 Initialized NIXL agent: e36c7c4d-f3a7-4d3a-ae89-d8afe056c124
+2026-10-16 01:40:38 NIXL INFO    _api.py:281 Initialized NIXL agent: 9645a10e-db08-499e-8180-e8cacd5cbe2f
+2026-10-16 01:40:38 NIXL INFO    _api.py:281 Initialized NIXL agent: a8838273-3354-4fc5-a339-90efcb859341
+2026-10-16 01:40:42 NIXL INFO    _api.py:405 Backend UCX was instantiated
+[2026-10-16 01:40:42 DP2 TP2 EP2] NIXL KVManager initialized with backend: UCX
+2026-10-16 01:40:42 NIXL INFO    _api.py:405 Backend UCX was instantiated
+[2026-10-16 01:40:42 DP3 TP3 EP3] NIXL KVManager initialized with backend: UCX
+2026-10-16 01:40:42 NIXL INFO    _api.py:405 Backend UCX was instantiated
+[2026-10-16 01:40:42 DP1 TP1 EP1] NIXL KVManager initialized with backend: UCX
+2026-10-16 01:40:42 NIXL INFO    _api.py:405 Backend UCX was instantiated
+[2026-10-16 01:40:42 DP0 TP0 EP0] NIXL KVManager initialized with backend: UCX
+[2026-10-16 01:40:44] INFO:     Started server process [4116455]
+[2026-10-16 01:40:44] INFO:     Waiting for application startup.
+[2026-10-16 01:40:44] Using default chat sampling params from model generation config: {'temperature': 0.7, 'top_k': 20, 'top_p': 0.8}
+[2026-10-16 01:40:44] INFO:     Application startup complete.
+[2026-10-16 01:40:44] INFO:     Uvicorn running on http://0.0.0.0:30100 (Press CTRL+C to quit)
+[2026-10-16 01:40:45] INFO:     127.0.0.1:54862 - "GET /model_info HTTP/1.1" 200 OK
+[2026-10-16 01:40:45] Start of pd disaggregation warmup ...
+[2026-10-16 01:40:46] INFO:     192.0.2.6:52628 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-10-16 01:40:51] INFO:     192.0.2.6:52642 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-10-16 01:40:54 DP0 TP0 EP0] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-10-16 01:40:54 DP0 TP0 EP0] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=9216, K=4096, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-10-16 01:40:54 DP0 TP0 EP0] Required memory for warmup: 0.37890625GB, Available memory: 12.052001953125GB
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s]DeepGEMM warmup:   0%|          | 1/16384 [00:01<8:05:46,  1.78s/it][2026-10-16 01:40:56] INFO:     192.0.2.6:37056 - "GET /health HTTP/1.1" 503 Service Unavailable
+DeepGEMM warmup:   0%|          | 17/16384 [00:03<48:49,  5.59it/s] DeepGEMM warmup:  13%|█▎        | 2193/16384 [00:03<00:14, 997.90it/s]DeepGEMM warmup:  19%|█▉        | 3187/16384 [00:03<00:08, 1527.94it/s]DeepGEMM warmup:  25%|██▌       | 4121/16384 [00:03<00:05, 2050.39it/s]DeepGEMM warmup:  30%|███       | 4928/16384 [00:04<00:04, 2461.65it/s]DeepGEMM warmup:  34%|███▍      | 5619/16384 [00:04<00:03, 2745.56it/s]DeepGEMM warmup:  38%|███▊      | 6215/16384 [00:04<00:03, 2906.81it/s]DeepGEMM warmup:  41%|████      | 6734/16384 [00:04<00:03, 2965.41it/s]DeepGEMM warmup:  44%|████▍     | 7190/16384 [00:04<00:03, 2962.12it/s]DeepGEMM warmup:  46%|████▋     | 7597/16384 [00:04<00:03, 2924.43it/s]DeepGEMM warmup:  49%|████▊     | 7965/16384 [00:05<00:02, 2867.91it/s]DeepGEMM warmup:  51%|█████     | 8303/16384 [00:05<00:02, 2788.44it/s]DeepGEMM warmup:  53%|█████▎    | 8616/16384 [00:05<00:02, 2700.96it/s]DeepGEMM warmup:  54%|█████▍    | 8909/16384 [00:05<00:02, 2622.84it/s]DeepGEMM warmup:  56%|█████▌    | 9186/16384 [00:05<00:02, 2529.75it/s]DeepGEMM warmup:  58%|█████▊    | 9448/16384 [00:05<00:02, 2436.88it/s]DeepGEMM warmup:  59%|█████▉    | 9697/16384 [00:05<00:02, 2361.73it/s]DeepGEMM warmup:  61%|██████    | 9937/16384 [00:05<00:02, 2283.72it/s]DeepGEMM warmup:  62%|██████▏   | 10167/16384 [00:05<00:02, 2223.45it/s]DeepGEMM warmup:  63%|██████▎   | 10390/16384 [00:06<00:02, 2159.58it/s]DeepGEMM warmup:  65%|██████▍   | 10607/16384 [00:06<00:02, 2104.11it/s]DeepGEMM warmup:  66%|██████▌   | 10818/16384 [00:06<00:02, 2052.89it/s]DeepGEMM warmup:  67%|██████▋   | 11023/16384 [00:06<00:02, 2003.95it/s]DeepGEMM warmup:  69%|██████▊   | 11224/16384 [00:06<00:02, 1964.84it/s]DeepGEMM warmup:  70%|██████▉   | 11421/16384 [00:06<00:02, 1918.40it/s]DeepGEMM warmup:  71%|███████   | 11613/16384 [00:06<00:02, 1880.94it/s]DeepGEMM warmup:  72%|███████▏  | 11801/16384 [00:06<00:02, 1851.66it/s]DeepGEMM warmup:  73%|███████▎  | 11986/16384 [00:06<00:02, 1813.53it/s]DeepGEMM warmup:  74%|███████▍  | 12168/16384 [00:07<00:02, 1775.31it/s]DeepGEMM warmup:  75%|███████▌  | 12346/16384 [00:07<00:02, 1746.94it/s]DeepGEMM warmup:  76%|███████▋  | 12521/16384 [00:07<00:02, 1723.81it/s]DeepGEMM warmup:  77%|███████▋  | 12694/16384 [00:07<00:02, 1692.08it/s]/opt/sglang/venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.lstat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/opt/sglang/venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.lstat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/opt/sglang/venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.lstat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+DeepGEMM warmup:  79%|███████▊  | 12864/16384 [00:07<00:02, 1667.35it/s][2026-10-16 01:41:01] INFO:     192.0.2.6:37064 - "GET /health HTTP/1.1" 503 Service Unavailable
+DeepGEMM warmup:  80%|███████▉  | 13031/16384 [00:07<00:02, 1646.47it/s]DeepGEMM warmup:  81%|████████  | 13196/16384 [00:07<00:01, 1616.69it/s]DeepGEMM warmup:  82%|████████▏ | 13358/16384 [00:07<00:01, 1593.14it/s]DeepGEMM warmup:  83%|████████▎ | 13518/16384 [00:07<00:01, 1577.07it/s]DeepGEMM warmup:  83%|████████▎ | 13676/16384 [00:08<00:01, 1555.10it/s]DeepGEMM warmup:  84%|████████▍ | 13832/16384 [00:08<00:01, 1534.40it/s]DeepGEMM warmup:  85%|████████▌ | 13986/16384 [00:08<00:01, 1520.25it/s]DeepGEMM warmup:  86%|████████▋ | 14138/16384 [00:08<00:01, 1504.50it/s]DeepGEMM warmup:  87%|████████▋ | 14289/16384 [00:08<00:01, 1484.01it/s]DeepGEMM warmup:  88%|████████▊ | 14438/16384 [00:08<00:01, 1469.95it/s]DeepGEMM warmup:  89%|████████▉ | 14585/16384 [00:08<00:01, 1460.08it/s]DeepGEMM warmup:  90%|████████▉ | 14731/16384 [00:08<00:01, 1439.79it/s]DeepGEMM warmup:  91%|█████████ | 14875/16384 [00:08<00:01, 1422.81it/s]DeepGEMM warmup:  92%|█████████▏| 15018/16384 [00:08<00:00, 1403.03it/s]DeepGEMM warmup:  93%|█████████▎| 15159/16384 [00:09<00:00, 1389.67it/s]DeepGEMM warmup:  93%|█████████▎| 15298/16384 [00:09<00:00, 1376.70it/s]DeepGEMM warmup:  94%|█████████▍| 15436/16384 [00:09<00:00, 1361.56it/s]DeepGEMM warmup:  95%|█████████▌| 15573/16384 [00:09<00:00, 1345.72it/s]DeepGEMM warmup:  96%|█████████▌| 15708/16384 [00:09<00:00, 1334.50it/s]DeepGEMM warmup:  97%|█████████▋| 15842/16384 [00:09<00:00, 1326.32it/s]DeepGEMM warmup:  98%|█████████▊| 15975/16384 [00:09<00:00, 1312.53it/s]DeepGEMM warmup:  98%|█████████▊| 16107/16384 [00:09<00:00, 1300.16it/s]DeepGEMM warmup:  99%|█████████▉| 16238/16384 [00:09<00:00, 1290.12it/s]DeepGEMM warmup: 100%|█████████▉| 16368/16384 [00:09<00:00, 1280.73it/s]DeepGEMM warmup: 100%|██████████| 16384/16384 [00:10<00:00, 1638.16it/s]
+[2026-10-16 01:41:04 DP0 TP0 EP0] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-10-16 01:41:04 DP0 TP0 EP0] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=4096, K=8192, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-10-16 01:41:04 DP0 TP0 EP0] Required memory for warmup: 0.28125GB, Available memory: 12.050048828125GB
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s]DeepGEMM warmup:   0%|          | 1/16384 [00:00<2:41:28,  1.69it/s]DeepGEMM warmup:  12%|█▏        | 1924/16384 [00:00<00:03, 3742.45it/s]DeepGEMM warmup:  19%|█▊        | 3055/16384 [00:00<00:02, 5186.14it/s]DeepGEMM warmup:  25%|██▌       | 4108/16384 [00:00<00:02, 5565.81it/s]DeepGEMM warmup:  30%|███       | 4995/16384 [00:01<00:02, 5379.81it/s]DeepGEMM warmup:  35%|███▌      | 5743/16384 [00:01<00:02, 5038.05it/s]DeepGEMM warmup:  39%|███▉      | 6384/16384 [00:01<00:02, 4630.87it/s]DeepGEMM warmup:  42%|████▏     | 6937/16384 [00:01<00:02, 4292.40it/s]DeepGEMM warmup:  45%|████▌     | 7425/16384 [00:01<00:02, 3999.01it/s]DeepGEMM warmup:  48%|████▊     | 7862/16384 [00:01<00:02, 3726.66it/s]DeepGEMM warmup:  50%|█████     | 8258/16384 [00:02<00:02, 3485.44it/s][2026-10-16 01:41:06] INFO:     192.0.2.6:52870 - "GET /health HTTP/1.1" 503 Service Unavailable
+DeepGEMM warmup:  53%|█████▎    | 8620/16384 [00:02<00:02, 3303.00it/s]DeepGEMM warmup:  55%|█████▍    | 8958/16384 [00:02<00:02, 3156.68it/s]DeepGEMM warmup:  57%|█████▋    | 9277/16384 [00:02<00:02, 2969.53it/s]DeepGEMM warmup:  58%|█████▊    | 9575/16384 [00:02<00:02, 2842.03it/s]DeepGEMM warmup:  60%|██████    | 9859/16384 [00:02<00:02, 2738.28it/s]DeepGEMM warmup:  62%|██████▏   | 10132/16384 [00:02<00:02, 2617.52it/s]DeepGEMM warmup:  63%|██████▎   | 10393/16384 [00:02<00:02, 2518.10it/s]DeepGEMM warmup:  65%|██████▍   | 10644/16384 [00:03<00:02, 2441.77it/s]DeepGEMM warmup:  66%|██████▋   | 10887/16384 [00:03<00:02, 2380.77it/s]DeepGEMM warmup:  68%|██████▊   | 11124/16384 [00:03<00:02, 2300.50it/s]DeepGEMM warmup:  69%|██████▉   | 11353/16384 [00:03<00:02, 2225.74it/s]DeepGEMM warmup:  71%|███████   | 11575/16384 [00:03<00:02, 2173.75it/s]DeepGEMM warmup:  72%|███████▏  | 11792/16384 [00:03<00:02, 2132.82it/s]DeepGEMM warmup:  73%|███████▎  | 12005/16384 [00:03<00:02, 2096.25it/s]DeepGEMM warmup:  75%|███████▍  | 12215/16384 [00:03<00:02, 2032.94it/s]DeepGEMM warmup:  76%|███████▌  | 12418/16384 [00:03<00:01, 1993.41it/s]DeepGEMM warmup:  77%|███████▋  | 12618/16384 [00:04<00:01, 1961.73it/s]DeepGEMM warmup:  78%|███████▊  | 12814/16384 [00:04<00:01, 1933.86it/s]DeepGEMM warmup:  79%|███████▉  | 13008/16384 [00:04<00:01, 1909.06it/s]DeepGEMM warmup:  81%|████████  | 13199/16384 [00:04<00:01, 1860.58it/s]DeepGEMM warmup:  82%|████████▏ | 13385/16384 [00:04<00:01, 1828.05it/s]DeepGEMM warmup:  83%|████████▎ | 13568/16384 [00:04<00:01, 1801.36it/s]DeepGEMM warmup:  84%|████████▍ | 13749/16384 [00:04<00:01, 1778.79it/s]DeepGEMM warmup:  85%|████████▌ | 13927/16384 [00:04<00:01, 1758.11it/s]DeepGEMM warmup:  86%|████████▌ | 14103/16384 [00:04<00:01, 1736.12it/s]DeepGEMM warmup:  87%|████████▋ | 14277/16384 [00:04<00:01, 1696.51it/s]DeepGEMM warmup:  88%|████████▊ | 14447/16384 [00:05<00:01, 1672.00it/s]DeepGEMM warmup:  89%|████████▉ | 14615/16384 [00:05<00:01, 1651.84it/s]DeepGEMM warmup:  90%|█████████ | 14781/16384 [00:05<00:00, 1634.58it/s]DeepGEMM warmup:  91%|█████████ | 14945/16384 [00:05<00:00, 1622.09it/s]DeepGEMM warmup:  92%|█████████▏| 15108/16384 [00:05<00:00, 1613.15it/s]DeepGEMM warmup:  93%|█████████▎| 15270/16384 [00:05<00:00, 1580.59it/s]DeepGEMM warmup:  94%|█████████▍| 15429/16384 [00:05<00:00, 1560.06it/s]DeepGEMM warmup:  95%|█████████▌| 15586/16384 [00:05<00:00, 1541.70it/s]DeepGEMM warmup:  96%|█████████▌| 15741/16384 [00:05<00:00, 1526.98it/s]DeepGEMM warmup:  97%|█████████▋| 15894/16384 [00:06<00:00, 1515.26it/s]DeepGEMM warmup:  98%|█████████▊| 16046/16384 [00:06<00:00, 1504.35it/s]DeepGEMM warmup:  99%|█████████▉| 16197/16384 [00:06<00:00, 1484.77it/s]DeepGEMM warmup: 100%|█████████▉| 16346/16384 [00:06<00:00, 1465.30it/s]DeepGEMM warmup: 100%|██████████| 16384/16384 [00:06<00:00, 2575.05it/s]
+[2026-10-16 01:41:11] INFO:     192.0.2.6:52882 - "GET /health HTTP/1.1" 503 Service Unavailable
+/opt/sglang/venv/lib/python3.12/site-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.lstat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+[rank0]:[W1016 01:41:12.884711905 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[2026-10-16 01:41:16 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.70
+[2026-10-16 01:41:16 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.70
+[2026-10-16 01:41:16 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.70
+[2026-10-16 01:41:16 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.70
+[2026-10-16 01:41:16] INFO:     127.0.0.1:54882 - "POST /generate HTTP/1.1" 200 OK
+[2026-10-16 01:41:16] INFO:     127.0.0.1:54868 - "POST /generate HTTP/1.1" 200 OK
+[2026-10-16 01:41:16] INFO:     127.0.0.1:54884 - "POST /generate HTTP/1.1" 200 OK
+[2026-10-16 01:41:16] INFO:     127.0.0.1:54864 - "POST /generate HTTP/1.1" 200 OK
+[2026-10-16 01:41:16] Disaggregation warmup requests completed for all 4 DP ranks
+[2026-10-16 01:41:16] End of disaggregation warmup
+[2026-10-16 01:41:16] The server is fired up and ready to roll!
+[2026-10-16 01:41:19 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 23.43
+[2026-10-16 01:41:23 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 14.09
+[2026-10-16 01:41:24] INFO:     192.0.2.6:35254 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:41:30 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 9.10
+[2026-10-16 01:41:31] INFO:     192.0.2.6:40500 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:41:38 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:41:39] INFO:     192.0.2.6:60444 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:41:46 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:41:47] INFO:     192.0.2.6:33102 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:41:55 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:41:55] INFO:     192.0.2.6:33108 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:03 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:42:03] INFO:     192.0.2.6:42016 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:11 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:42:11] INFO:     192.0.2.6:39180 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:19 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:42:20] INFO:     192.0.2.6:48942 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:27 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.97
+[2026-10-16 01:42:28] INFO:     192.0.2.6:48142 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:35 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+[2026-10-16 01:42:36] INFO:     192.0.2.6:48154 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:40] WARNING:  Invalid HTTP request received.
+[2026-10-16 01:42:41] WARNING:  Invalid HTTP request received.
+[2026-10-16 01:42:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10.85
+[2026-10-16 01:42:41] INFO:     192.0.2.8:52830 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:42:42] INFO:     192.0.2.8:52854 - "GET /server_info HTTP/1.1" 200 OK
+[2026-10-16 01:42:42] INFO:     192.0.2.8:52854 - "GET /model_info HTTP/1.1" 200 OK
+[2026-10-16 01:43:21 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 3937, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 32.83
+[2026-10-16 01:43:21] INFO:     192.0.2.8:58478 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:21 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 5, #pending-token: 23942, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 100.79
+[2026-10-16 01:43:21 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 19877, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10924.86
+[2026-10-16 01:43:21 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 5, #pending-token: 19942, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 32.73
+[2026-10-16 01:43:21 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 5, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 32.22
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58632 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58526 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58484 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 23942, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11415.28
+[2026-10-16 01:43:22 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19813, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11405.99
+[2026-10-16 01:43:22 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 23879, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11407.19
+[2026-10-16 01:43:22 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 23878, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11386.27
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58516 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.38, #running-req: 0, #queue-req: 2, #pending-token: 15748, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11480.79
+[2026-10-16 01:43:22 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19877, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11464.63
+[2026-10-16 01:43:22 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19814, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11464.45
+[2026-10-16 01:43:22 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.38, #running-req: 0, #queue-req: 3, #pending-token: 19813, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11464.66
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58542 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:22 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.38, #running-req: 0, #queue-req: 1, #pending-token: 11683, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11524.86
+[2026-10-16 01:43:22 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.50, #running-req: 0, #queue-req: 2, #pending-token: 15748, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11532.93
+[2026-10-16 01:43:22 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 2, #pending-token: 15812, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11515.23
+[2026-10-16 01:43:22 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 2, #pending-token: 15748, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11517.65
+[2026-10-16 01:43:23] INFO:     192.0.2.8:58626 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:23 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.38, #running-req: 0, #queue-req: 1, #pending-token: 11747, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11557.34
+[2026-10-16 01:43:23 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.63, #running-req: 0, #queue-req: 1, #pending-token: 11683, #bootstrap-req: 0, #inflight-req: 4, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11548.48
+[2026-10-16 01:43:23 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 1, #pending-token: 11683, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11558.78
+[2026-10-16 01:43:23 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.51, #running-req: 0, #queue-req: 0, #pending-token: 7618, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11531.38
+[2026-10-16 01:43:23] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:23 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 0, #pending-token: 7618, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11477.57
+[2026-10-16 01:43:23 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 3553, #bootstrap-req: 0, #inflight-req: 4, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11480.74
+[2026-10-16 01:43:23 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.50, #running-req: 0, #queue-req: 0, #pending-token: 7682, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11474.53
+[2026-10-16 01:43:23 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.75, #running-req: 0, #queue-req: 0, #pending-token: 7618, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11470.58
+[2026-10-16 01:43:23] INFO:     192.0.2.8:58680 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:23 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 3553, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10642.06
+[2026-10-16 01:43:23 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 3584, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 9304.35
+[2026-10-16 01:43:23 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 3553, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10632.87
+[2026-10-16 01:43:23 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.49, #running-req: 0, #queue-req: 0, #pending-token: 3617, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10632.66
+[2026-10-16 01:43:24] INFO:     192.0.2.8:58698 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:24] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:24 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3584, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10595.82
+[2026-10-16 01:43:24 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3648, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10784.91
+[2026-10-16 01:43:24 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 3584, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10589.61
+[2026-10-16 01:43:24 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7122.75
+[2026-10-16 01:43:25 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.49, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 4, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4298.14
+[2026-10-16 01:43:25 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2491.47
+[2026-10-16 01:43:25 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3150.26
+[2026-10-16 01:43:25] INFO:     192.0.2.8:58626 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:26 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7410.24
+[2026-10-16 01:43:26 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7305.22
+[2026-10-16 01:43:26] INFO:     192.0.2.8:58568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:26 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 3937, #bootstrap-req: 1, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3397.37
+[2026-10-16 01:43:26 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12610.50
+[2026-10-16 01:43:26 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16210.86
+[2026-10-16 01:43:26] INFO:     192.0.2.8:58516 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:27 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8475.58
+[2026-10-16 01:43:27 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 1, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5560.35
+[2026-10-16 01:43:27] INFO:     192.0.2.8:58526 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:27] INFO:     192.0.2.8:58568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:27 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 15671.04
+[2026-10-16 01:43:27] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:29 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2073.35
+[2026-10-16 01:43:29] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:29 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7316.75
+[2026-10-16 01:43:29] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:30 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12766.56
+[2026-10-16 01:43:30] INFO:     192.0.2.8:58568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:30 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1214.98
+[2026-10-16 01:43:30] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:31 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4763.40
+[2026-10-16 01:43:31] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:31 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8291.94
+[2026-10-16 01:43:31] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:31 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12987.21
+[2026-10-16 01:43:32 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1703.02
+[2026-10-16 01:43:32] INFO:     192.0.2.8:49684 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:33 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6839.85
+[2026-10-16 01:43:33] INFO:     192.0.2.8:49684 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:35 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1669.15
+[2026-10-16 01:43:35] INFO:     192.0.2.8:49684 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36 DP1 TP1 EP1] NIXL transport error for room 4516050926990428963: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:36.701095 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:43:36 DP1 TP1 EP1] NIXL transport error for room 5722512760855279183: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='edfe47b1f603450c9dda598d0097cf8c' req.bootstrap_room=4516050926990428963 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='aa9bcc540d9d4a048774dc79bfee1ec9' req.bootstrap_room=5722512760855279183 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58504 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58600 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+E1016 01:43:36.711622 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:43:36 DP1 TP1 EP1] NIXL transport error for room 7232476188744200462: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:36.729102 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:43:36 DP1 TP1 EP1] NIXL transport error for room 8178771905736790036: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:36.729661 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:43:36 DP1 TP1 EP1] NIXL transport error for room 5164906236219510441: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP0 TP0 EP0] NIXL transport error for room 920928726939675899: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='6052cbb59aef4178984f8c1c08437bb3' req.bootstrap_room=7232476188744200462 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='b9e144fa7ae4452b99e390267c4413b7' req.bootstrap_room=8178771905736790036 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='ebdcef40b355450d9de7d01dc42500ee' req.bootstrap_room=5164906236219510441 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58678 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58686 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58720 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58680 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58484 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='6528c3ea58ce49a795abbec6f89781e9' req.bootstrap_room=920928726939675899 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58490 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:36 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 785.35
+[2026-10-16 01:43:36] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 7938, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 330.24
+[2026-10-16 01:43:37 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 3873, #bootstrap-req: 1, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16444.00
+[2026-10-16 01:43:37 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3904, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16004.64
+[2026-10-16 01:43:37 DP2 TP2 EP2] NIXL transport error for room 2892827819082803140: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37 DP3 TP3 EP3] NIXL transport error for room 4015584708172919905: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:37.779341 4127614 nixl_agent.cpp:1198] postXferReq: remote agent '02d0d72f-3ef4-4288-aa45-4da8168c6c60' was disconnected after transfer request creation
+[2026-10-16 01:43:37 DP2 TP2 EP2] NIXL transport error for room 7285750202468822205: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:37.779801 4127614 nixl_agent.cpp:1198] postXferReq: remote agent '02d0d72f-3ef4-4288-aa45-4da8168c6c60' was disconnected after transfer request creation
+[2026-10-16 01:43:37 DP2 TP2 EP2] NIXL transport error for room 4984701011145736698: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='056b849fe0e7467b9425141de8841b25' req.bootstrap_room=4015584708172919905 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='5839ea7ff102484aa3bc32519cc15111' req.bootstrap_room=2892827819082803140 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='6063880af7134bd090b247faf07b19a9' req.bootstrap_room=7285750202468822205 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='2da09e44fdda421aa0e411182b634ed9' req.bootstrap_room=4984701011145736698 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58742 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16625.63
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58612 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:37] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:38 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3026.53
+[2026-10-16 01:43:38] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:38 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1471.34
+[2026-10-16 01:43:38] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:38 DP0 TP0 EP0] NIXL transport error for room 3966881097516430269: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:39 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7300.37
+[2026-10-16 01:43:39 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4989.71
+[2026-10-16 01:43:39 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='cd1c4b1b050f460e91e2ee520ca36a90' req.bootstrap_room=3966881097516430269 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:39 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 309.59
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58612 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12427.81
+[2026-10-16 01:43:39 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 1, #pending-token: 4001, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2732.58
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 13151.44
+[2026-10-16 01:43:39 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6315.50
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:39] INFO:     192.0.2.8:58742 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:40 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4234.24
+[2026-10-16 01:43:40 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12533.25
+[2026-10-16 01:43:40] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:40] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:40 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3937, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 13107.00
+[2026-10-16 01:43:40 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6358.54
+[2026-10-16 01:43:40] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:40] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:40 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10889.51
+[2026-10-16 01:43:40 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11069.60
+[2026-10-16 01:43:40 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5956.70
+[2026-10-16 01:43:40] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7323.38
+[2026-10-16 01:43:41 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7319.11
+[2026-10-16 01:43:41 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7215.64
+[2026-10-16 01:43:41] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16041.68
+[2026-10-16 01:43:41] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8258.51
+[2026-10-16 01:43:41] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:41] INFO:     192.0.2.8:41926 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:43:42 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7058.17
+[2026-10-16 01:43:42 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4901.18
+[2026-10-16 01:43:42] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:42] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:42 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6286.14
+[2026-10-16 01:43:42 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12777.98
+[2026-10-16 01:43:42] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:42] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:42 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16800.53
+[2026-10-16 01:43:42] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:43 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10924.18
+[2026-10-16 01:43:43 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.37, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 3, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4362.38
+[2026-10-16 01:43:43 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6620.13
+[2026-10-16 01:43:43] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:43] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:43 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8492.28
+[2026-10-16 01:43:43 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8342.00
+[2026-10-16 01:43:43] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:43] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:43 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.49, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 4, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4190.28
+[2026-10-16 01:43:43 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8184.06
+[2026-10-16 01:43:44] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:44 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5575.35
+[2026-10-16 01:43:44] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:44 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7196.55
+[2026-10-16 01:43:44 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7126.69
+[2026-10-16 01:43:44] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:44] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:44 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16183.20
+[2026-10-16 01:43:44] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:45 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3937, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4994.05
+[2026-10-16 01:43:45] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:45 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8352.25
+[2026-10-16 01:43:45 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4118.23
+[2026-10-16 01:43:45] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:45] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:45 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4104.18
+[2026-10-16 01:43:45] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:46 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16531.26
+[2026-10-16 01:43:46] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:46 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4962.07
+[2026-10-16 01:43:46 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4994.53
+[2026-10-16 01:43:46] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:46] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:46 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4657.93
+[2026-10-16 01:43:46 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7178.80
+[2026-10-16 01:43:46] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:47] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:47 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16364.80
+[2026-10-16 01:43:47] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:47 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7001.52
+[2026-10-16 01:43:47 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3566.04
+[2026-10-16 01:43:47] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:47] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:47 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7857.07
+[2026-10-16 01:43:48] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:48 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8287.01
+[2026-10-16 01:43:48 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4004.14
+[2026-10-16 01:43:48] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:48] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:48 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12859.66
+[2026-10-16 01:43:48 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2464.69
+[2026-10-16 01:43:48] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:48] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:49 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7250.15
+[2026-10-16 01:43:49] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:49 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7383.02
+[2026-10-16 01:43:49] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:49 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11621.15
+[2026-10-16 01:43:49] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:49 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3937, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3578.35
+[2026-10-16 01:43:50 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7232.80
+[2026-10-16 01:43:50 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2782.04
+[2026-10-16 01:43:50 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5001.43
+[2026-10-16 01:43:50] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:50] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:50 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16260.45
+[2026-10-16 01:43:50] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10671.20
+[2026-10-16 01:43:51 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6382.60
+[2026-10-16 01:43:51] INFO:     192.0.2.8:58584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16404.85
+[2026-10-16 01:43:51] INFO:     192.0.2.8:58682 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7112.15
+[2026-10-16 01:43:51] INFO:     192.0.2.8:41942 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51 DP0 TP0 EP0] NIXL transport error for room 2950246242687511282: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:51.839929 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:43:51 DP0 TP0 EP0] NIXL transport error for room 3676850822119010762: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:51.840293 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:43:51 DP0 TP0 EP0] NIXL transport error for room 1591963618887997686: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:51 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='85dfea9419c545429d08118fe9046437' req.bootstrap_room=2950246242687511282 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:51 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='fb9e306b256445fbaf18463af81d01d1' req.bootstrap_room=3676850822119010762 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:51 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='7529ae63ebe44bc292d39554dc220898' req.bootstrap_room=1591963618887997686 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:51] INFO:     192.0.2.8:58662 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51] INFO:     192.0.2.8:58684 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:51] INFO:     192.0.2.8:58712 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:52 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.87, #running-req: 0, #queue-req: 0, #pending-token: 7938, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 323.01
+[2026-10-16 01:43:52 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 3873, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16387.38
+[2026-10-16 01:43:52 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3904, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8244.19
+[2026-10-16 01:43:52 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3485.60
+[2026-10-16 01:43:52] INFO:     192.0.2.8:58712 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 9095.75
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58712 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53 DP0 TP0 EP0] NIXL transport error for room 8418713114278824117: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:53.983354 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:43:53 DP0 TP0 EP0] NIXL transport error for room 3969795641813058908: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:53.983770 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:43:53 DP0 TP0 EP0] NIXL transport error for room 4694062402431954193: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:53.984084 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:43:53 DP0 TP0 EP0] NIXL transport error for room 3319514907429429260: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:43:53.984474 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:43:53 DP0 TP0 EP0] NIXL transport error for room 465144016849410651: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='2e1f38e3e0364adea433a7d29d84463a' req.bootstrap_room=8418713114278824117 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='f299f1d037754110bea3ecd2c83beff6' req.bootstrap_room=3969795641813058908 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='d370cd446ccc442eb526d19a61e033bf' req.bootstrap_room=4694062402431954193 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='ae7a952c46124a27b625e345d011224e' req.bootstrap_room=3319514907429429260 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='29bdb9f8b7244e43b51ab832a234cbc6' req.bootstrap_room=465144016849410651 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58698 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58626 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:53] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:54 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.49, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 4, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2851.41
+[2026-10-16 01:43:54 DP3 TP3 EP3] NIXL transport error for room 5558522327020256430: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:54 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='6f12acf1f6fd42cf9d648f76dcf3e546' req.bootstrap_room=5558522327020256430 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:43:54] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:54] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:54] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:54] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:54] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:55 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.62, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 5, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3304.82
+[2026-10-16 01:43:55 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1614.25
+[2026-10-16 01:43:55] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:56 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6090.86
+[2026-10-16 01:43:56 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 2, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 845.54
+[2026-10-16 01:43:56 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11529.36
+[2026-10-16 01:43:56] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:56 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 684.42
+[2026-10-16 01:43:56] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:56 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 3937, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7339.39
+[2026-10-16 01:43:56 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.98, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 8, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16392.91
+[2026-10-16 01:43:58 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2046.81
+[2026-10-16 01:43:58] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:43:59 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4374.18
+[2026-10-16 01:43:59] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:00 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2635.67
+[2026-10-16 01:44:00] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:02 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2713.19
+[2026-10-16 01:44:02] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:04 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1603.64
+[2026-10-16 01:44:04] INFO:     192.0.2.8:58630 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:04 DP2 TP2 EP2] NIXL transport error for room 6826071963233673930: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:04 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='db7c5ac7f8a7486fabc46e295370931b' req.bootstrap_room=6826071963233673930 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:04] INFO:     192.0.2.8:58646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:04] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:05 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6689.15
+[2026-10-16 01:44:05] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:05 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7714.20
+[2026-10-16 01:44:05] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:06 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4154.99
+[2026-10-16 01:44:06] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:06 DP0 TP0 EP0] NIXL transport error for room 1996079257025272272: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:06.867685 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:44:06 DP0 TP0 EP0] NIXL transport error for room 4146297933013881921: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:06.868060 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:44:06 DP0 TP0 EP0] NIXL transport error for room 7105355377764343431: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:07 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='687d5f0d60a2488387c4e7f4f236a9a4' req.bootstrap_room=1996079257025272272 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:07 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='6a68da7ead084e3bb65f353861cbe15b' req.bootstrap_room=4146297933013881921 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:07 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='5a0d89a2d6db46c9a18661e4e9165e57' req.bootstrap_room=7105355377764343431 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:07] INFO:     192.0.2.8:58542 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:07] INFO:     192.0.2.8:58742 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:07] INFO:     192.0.2.8:58684 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:07 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10823.03
+[2026-10-16 01:44:07] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:07 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.74, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 6, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 390.12
+[2026-10-16 01:44:07 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7501.67
+[2026-10-16 01:44:07] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:08 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.86, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 7, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4467.43
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 2583411584671307068: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.014836 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 7665055912677054085: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.015235 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 320807949065939592: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.015501 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 8256787529405663745: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.015733 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 9080044920313858481: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.016060 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 2934533336161992029: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:44:09.016433 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 4891346242223077985: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='6642011394ba490aaaf89c1feba85623' req.bootstrap_room=2583411584671307068 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='6175213ded1a47e58fb16b78b4f33e6c' req.bootstrap_room=7665055912677054085 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='0e4f70583f964197981115289889db02' req.bootstrap_room=320807949065939592 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='df5104d2c9364d7582401175e87aa791' req.bootstrap_room=8256787529405663745 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58612 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58640 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58708 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='be1ca23a55c74b12bded2b14b99c57de' req.bootstrap_room=9080044920313858481 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='deb5aef28fe54a70bc6da29184de8848' req.bootstrap_room=2934533336161992029 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='f1a119d408454276a6490bc9953f4e26' req.bootstrap_room=4891346242223077985 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58596 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58536 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3220.76
+E1016 01:44:09.407567 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:44:09 DP0 TP0 EP0] NIXL transport error for room 3277432667738790370: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='08151891c0074ded9e237992818ca3cb' req.bootstrap_room=3277432667738790370 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:09] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:10 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6766.14
+E1016 01:44:10.047680 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:44:10 DP0 TP0 EP0] NIXL transport error for room 1012330417823555999: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:10 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='1b72de6678584f279ff2efe45ece5d3e' req.bootstrap_room=1012330417823555999 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:10] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:10 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4671.08
+E1016 01:44:10.866894 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:44:10 DP0 TP0 EP0] NIXL transport error for room 7086984742037633390: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:10 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='7e0e2e8e4b0342ffa570e95878da4b02' req.bootstrap_room=7086984742037633390 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:44:10] INFO:     192.0.2.8:58726 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:44:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2.12
+[2026-10-16 01:44:41] INFO:     192.0.2.8:53536 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:45:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:45:41] INFO:     192.0.2.8:33188 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:46:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:46:41] INFO:     192.0.2.8:56246 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:47:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:47:41] INFO:     192.0.2.8:53066 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:48:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:48:41] INFO:     192.0.2.8:44712 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:49:11 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 4, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12.79
+[2026-10-16 01:49:11 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 5, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 13.27
+[2026-10-16 01:49:11 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 7, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 133.13
+E1016 01:49:11.296243 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:11 DP1 TP1 EP1] NIXL transport error for room 1168578266758980403: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35296 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='8419d0f454f14f95bd1704e0906757bb' req.bootstrap_room=1168578266758980403 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35278 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 3930, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11613.79
+[2026-10-16 01:49:11 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 11918, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11031.58
+[2026-10-16 01:49:11 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 5, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11439.22
+E1016 01:49:11.648616 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:11 DP0 TP0 EP0] NIXL transport error for room 6771053803675101215: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:11 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='19c6ba82c82847e3a35df4e71ae21494' req.bootstrap_room=6771053803675101215 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35340 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35328 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11] INFO:     192.0.2.8:35312 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:11 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19842, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11686.63
+[2026-10-16 01:49:11 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 23900, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12.98
+[2026-10-16 01:49:11 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19842, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11682.73
+[2026-10-16 01:49:11 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 4, #pending-token: 23900, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11674.21
+E1016 01:49:11.999453 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP0 TP0 EP0] NIXL transport error for room 4273172341208557030: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:12.000299 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP0 TP0 EP0] NIXL transport error for room 6943058335732738796: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:12.007775 4127687 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP3 TP3 EP3] NIXL transport error for room 6679676472374242744: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='0a009d5e2db34df9b536ffffe6a5a793' req.bootstrap_room=6943058335732738796 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35374 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35360 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35348 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35352 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 2, #pending-token: 15784, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11545.84
+[2026-10-16 01:49:12 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19842, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11539.49
+E1016 01:49:12.353964 4127687 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 2, #pending-token: 15784, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11535.82
+[2026-10-16 01:49:12 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 3, #pending-token: 19842, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11548.10
+E1016 01:49:12.354191 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP3 TP3 EP3] NIXL transport error for room 523712477668612780: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12 DP0 TP0 EP0] NIXL transport error for room 7712945401863012899: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:12.362020 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP1 TP1 EP1] NIXL transport error for room 3091999399498352536: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='86b94666ba0d486685fc377f88b1f363' req.bootstrap_room=4273172341208557030 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='e838163db31a41fca82c283536d99747' req.bootstrap_room=6679676472374242744 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35414 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35398 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35384 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12] INFO:     192.0.2.8:35380 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:12 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 1, #pending-token: 11726, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11480.24
+[2026-10-16 01:49:12 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 1, #pending-token: 11726, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11469.49
+[2026-10-16 01:49:12 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 2, #pending-token: 15784, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11474.40
+E1016 01:49:12.711156 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:49:12 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 2, #pending-token: 15784, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11462.83
+[2026-10-16 01:49:12 DP0 TP0 EP0] NIXL transport error for room 5200486138454826138: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='c544a124955f4e7fa939a2220d40e615' req.bootstrap_room=3091999399498352536 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='ea42387b10da435b9d9c716d8f375356' req.bootstrap_room=7712945401863012899 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='48d33589c0984feabb11b9e363147f88' req.bootstrap_room=523712477668612780 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35442 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35436 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35430 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35418 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 1, #pending-token: 11726, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11646.66
+[2026-10-16 01:49:13 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 0, #pending-token: 7668, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11630.41
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 1, #pending-token: 11726, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11629.88
+E1016 01:49:13.063281 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:13 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 0, #pending-token: 7668, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11621.59
+[2026-10-16 01:49:13 DP0 TP0 EP0] NIXL transport error for room 3986824445517488615: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='9fc60996ae634370acb93838b68a5dbe' req.bootstrap_room=5200486138454826138 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35486 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35476 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35462 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 0, #pending-token: 7668, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11594.28
+[2026-10-16 01:49:13 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3610, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11586.21
+[2026-10-16 01:49:13 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3610, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11596.11
+E1016 01:49:13.416623 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:49:13 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.26, #running-req: 0, #queue-req: 0, #pending-token: 7668, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11573.36
+[2026-10-16 01:49:13 DP0 TP0 EP0] NIXL transport error for room 3297439748171564157: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35526 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='fadc4ed7e7e04cdd938e31b387300a9e' req.bootstrap_room=3986824445517488615 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35502 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35512 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 3648, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10665.51
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3610, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11969.49
+[2026-10-16 01:49:13 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3648, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 10658.78
+E1016 01:49:13.758837 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:13 DP3 TP3 EP3] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3610, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11968.02
+E1016 01:49:13.759830 4127687 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:13 DP0 TP0 EP0] NIXL transport error for room 3927634591062518752: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13 DP3 TP3 EP3] NIXL transport error for room 7124591747400188690: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35570 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='48db94c8d8d54c8ea3f76de796b9120d' req.bootstrap_room=3297439748171564157 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:13] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3648, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12390.96
+[2026-10-16 01:49:14 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 3648, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12393.59
+[2026-10-16 01:49:14 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='88482fe5db704a659c265e52c579f3fb' req.bootstrap_room=7124591747400188690 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='f3b8662036054edea3d59f0a0b4d72e6' req.bootstrap_room=3927634591062518752 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35588 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7386.46
+[2026-10-16 01:49:14 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4798.02
+E1016 01:49:14.599315 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:14 DP0 TP0 EP0] NIXL transport error for room 9151249167717489687: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:14 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4750.63
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='56dfde969f8f44c3b721f191e1daa9f9' req.bootstrap_room=9151249167717489687 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35462 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:14 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12462.02
+[2026-10-16 01:49:14 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12452.69
+E1016 01:49:14.923246 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:14 DP0 TP0 EP0] NIXL transport error for room 130119774878922799: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:14] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='d2f2b8a2c7f14714bf89590c81919b16' req.bootstrap_room=130119774878922799 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3288.53
+[2026-10-16 01:49:15 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11288.30
+[2026-10-16 01:49:15 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5996.37
+E1016 01:49:15.279932 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+E1016 01:49:15.280138 4127614 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:15 DP0 TP0 EP0] NIXL transport error for room 7845814125897640587: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15 DP2 TP2 EP2] NIXL transport error for room 9039871729458343213: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='3e68fed3676d448e8821b9c9089642de' req.bootstrap_room=7845814125897640587 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='fe85b51697454b028dd504963047a0d3' req.bootstrap_room=9039871729458343213 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35570 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35588 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8418.52
+[2026-10-16 01:49:15 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8312.81
+E1016 01:49:15.765013 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:15 DP0 TP0 EP0] NIXL transport error for room 5921610067261385593: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='e11fc35c2ac14be090eba9072df912fb' req.bootstrap_room=5921610067261385593 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:15] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11682.48
+[2026-10-16 01:49:16 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11474.55
+[2026-10-16 01:49:16 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3396.42
+[2026-10-16 01:49:16 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4857.22
+E1016 01:49:16.110408 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:49:16 DP0 TP0 EP0] NIXL transport error for room 8562603932079015743: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='2d1634f2475d4e11aa0e7a1c5bfc8108' req.bootstrap_room=8562603932079015743 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35462 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 2, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6790.94
+[2026-10-16 01:49:16 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 2, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6791.55
+[2026-10-16 01:49:16 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6792.53
+E1016 01:49:16.703848 4127614 nixl_agent.cpp:1198] postXferReq: remote agent '02d0d72f-3ef4-4288-aa45-4da8168c6c60' was disconnected after transfer request creation
+[2026-10-16 01:49:16 DP2 TP2 EP2] NIXL transport error for room 5300297463533576766: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:16 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6687.51
+[2026-10-16 01:49:16 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='cd4ee8831078482ba444ff0ce4b22974' req.bootstrap_room=5300297463533576766 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35570 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:16] INFO:     192.0.2.8:35512 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+E1016 01:49:16.747994 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:16 DP0 TP0 EP0] NIXL transport error for room 5634193349736518212: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='2a85d832d73b41faa42c67243c28c5d2' req.bootstrap_room=5634193349736518212 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35588 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3930, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12354.30
+[2026-10-16 01:49:17 DP1 TP1 EP1] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3930, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12354.37
+E1016 01:49:17.035308 4127682 nixl_agent.cpp:1198] postXferReq: remote agent '22179775-b68e-418f-b230-f63ee6981157' was disconnected after transfer request creation
+[2026-10-16 01:49:17 DP1 TP1 EP1] NIXL transport error for room 274530844870438337: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:17.074967 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:49:17 DP0 TP0 EP0] NIXL transport error for room 7960707475252878922: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:17.075414 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:17 DP0 TP0 EP0] NIXL transport error for room 4548680101860120594: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='7cc39ea4f2c7416abe9db216b8f691d4' req.bootstrap_room=7960707475252878922 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='ca1dce4c8a5a4be6be3baa0344e1c5e5' req.bootstrap_room=274530844870438337 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17 DP2 TP2 EP2] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3930, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5937.08
+[2026-10-16 01:49:17 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11069.50
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 11064.62
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35502 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='d61c865389f04d2ea92ab3f39cc50a26' req.bootstrap_room=4548680101860120594 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 13039.30
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 13256.60
+E1016 01:49:17.699559 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:17 DP0 TP0 EP0] NIXL transport error for room 7769873755393248246: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='ff3f37de09694cc7b0341e356f86abdb' req.bootstrap_room=7769873755393248246 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35512 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:17] INFO:     192.0.2.8:35584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:18 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7264.65
+E1016 01:49:18.253284 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:18 DP0 TP0 EP0] NIXL transport error for room 2713281150776085409: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:18 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4659.59
+[2026-10-16 01:49:18 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='02c9ab6f8aaa48068cfbbfdacb220b52' req.bootstrap_room=2713281150776085409 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:18] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:18] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:18 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3668.48
+[2026-10-16 01:49:18 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7330.83
+E1016 01:49:18.803496 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:49:18 DP0 TP0 EP0] NIXL transport error for room 6430916000900185265: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:18 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='e707d1cb48b04c57a9f989b0cd5e1f3d' req.bootstrap_room=6430916000900185265 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:18] INFO:     192.0.2.8:35538 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:18] INFO:     192.0.2.8:35584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:19 DP3 TP3 EP3] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1667.69
+[2026-10-16 01:49:19 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 4624.44
+[2026-10-16 01:49:19] INFO:     192.0.2.8:35512 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:19 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12673.84
+[2026-10-16 01:49:19 DP0 TP0 EP0] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.25, #running-req: 0, #queue-req: 0, #pending-token: 3930, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6339.71
+E1016 01:49:19.449198 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:49:19 DP0 TP0 EP0] NIXL transport error for room 6846366023211741881: NIXL_ERR_REMOTE_DISCONNECT
+E1016 01:49:19.450193 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:49:19 DP0 TP0 EP0] NIXL transport error for room 6788532115823900253: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:19] INFO:     192.0.2.8:35502 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:19] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:19 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='c9d2500be3c8465d9ef55e784174b809' req.bootstrap_room=6846366023211741881 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:19] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:19 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 3968, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16627.38
+[2026-10-16 01:49:19 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='417e14b555dc411680b3584241be343e' req.bootstrap_room=6788532115823900253 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:19] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:20 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8348.50
+E1016 01:49:20.172479 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:20 DP0 TP0 EP0] NIXL transport error for room 8875476309399975056: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:20 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5537.14
+[2026-10-16 01:49:20 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='2f2d247c7f524d80824d0d208815c2a1' req.bootstrap_room=8875476309399975056 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:20] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:20] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:20 DP2 TP2 EP2] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2406.66
+[2026-10-16 01:49:20] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:20 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 6447.10
+E1016 01:49:20.798323 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:49:20 DP0 TP0 EP0] NIXL transport error for room 6784920423128914025: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:20 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='a43af0ce5553494b837919dc5eeed07e' req.bootstrap_room=6784920423128914025 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:20] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12496.01
+E1016 01:49:21.119492 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '46ebad29-2d61-440c-9e40-4b1b6bd6fb6e' was disconnected after transfer request creation
+[2026-10-16 01:49:21 DP0 TP0 EP0] NIXL transport error for room 7972232592441963243: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='cb03daa4ca0e43a1aa75298a6ce3b7d6' req.bootstrap_room=7972232592441963243 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 12614.72
+E1016 01:49:21.438772 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:49:21 DP0 TP0 EP0] NIXL transport error for room 3852016446596062769: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='cbdbcfe1174c4f54a30903283efc594c' req.bootstrap_room=3852016446596062769 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21] INFO:     192.0.2.8:35544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 8337.15
+E1016 01:49:21.923513 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '34ba3fad-a621-4b27-bd2f-18df1aa177da' was disconnected after transfer request creation
+[2026-10-16 01:49:21 DP0 TP0 EP0] NIXL transport error for room 800264310023793587: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21 DP1 TP1 EP1] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 2304.61
+[2026-10-16 01:49:21 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='9548acca0a8b4c10950458fd0f53f209' req.bootstrap_room=800264310023793587 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:21] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:21] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:22 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 1, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 9073.06
+E1016 01:49:22.366602 4127659 nixl_agent.cpp:1198] postXferReq: remote agent '818bb408-ddfe-4f2f-92b8-fe786419899a' was disconnected after transfer request creation
+[2026-10-16 01:49:22 DP0 TP0 EP0] NIXL transport error for room 2601088434519001183: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:22 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='321c427368e7464f969d7d172f233324' req.bootstrap_room=2601088434519001183 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:22] INFO:     192.0.2.8:35560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:22 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 16245.62
+E1016 01:49:22.615807 4127659 nixl_agent.cpp:1198] postXferReq: remote agent 'f14a5982-8d6d-4095-8b00-c0061704f617' was disconnected after transfer request creation
+[2026-10-16 01:49:22 DP0 TP0 EP0] NIXL transport error for room 6806710275666128250: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:22 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='4328a3f45ce94a17ae1b798ae0b94cbd' req.bootstrap_room=6806710275666128250 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:22] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:23 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3498.69
+E1016 01:49:23.767345 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '951ea78c-e05d-497d-acc0-f21e2bf73592' was disconnected after transfer request creation
+[2026-10-16 01:49:23 DP0 TP0 EP0] NIXL transport error for room 3690789967555283209: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:23 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='abd8bc85110d4a21ba9885133fdcd6b8' req.bootstrap_room=3690789967555283209 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:23] INFO:     192.0.2.8:35456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:30 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 4032, #cached-token: 0, token usage: 0.12, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 634.94
+E1016 01:49:30.118486 4127661 nixl_agent.cpp:1198] postXferReq: remote agent '504bc956-858b-48e6-b286-f923ea745ead' was disconnected after transfer request creation
+[2026-10-16 01:49:30 DP0 TP0 EP0] NIXL transport error for room 946195654285369076: NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:30 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='cd39a0ede86b443fa2f34188a55fca36' req.bootstrap_room=946195654285369076 with exception NIXL_ERR_REMOTE_DISCONNECT
+[2026-10-16 01:49:30] INFO:     192.0.2.8:55578 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:49:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 5.88
+[2026-10-16 01:49:41] INFO:     192.0.2.8:57648 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:50:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:50:41] INFO:     192.0.2.8:57826 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:51:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+[2026-10-16 01:51:41] INFO:     192.0.2.8:47896 - "GET /health HTTP/1.1" 200 OK
+[2026-10-16 01:51:46] Endpoint '/get_server_info' is deprecated and will be removed in a future version. Please use '/server_info' instead.
+[2026-10-16 01:51:46] INFO:     192.0.2.6:50430 - "GET /get_server_info HTTP/1.1" 200 OK
+[2026-10-16 01:51:49 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.56
+[2026-10-16 01:51:49] INFO:     192.0.2.8:59500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:51:50 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 48.47
+[2026-10-16 01:51:50] INFO:     192.0.2.8:59500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:51:51 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 132.59
+[2026-10-16 01:51:51] INFO:     192.0.2.8:59500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:51:51 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 114.08
+[2026-10-16 01:51:51] INFO:     192.0.2.8:59500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:51:52 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 121.02
+[2026-10-16 01:51:52] INFO:     192.0.2.8:59500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-10-16 01:51:53] SIGTERM received. signum=None frame=None. Draining requests and shutting down...
+[2026-10-16 01:51:53] SIGTERM received. signum=None frame=None. Draining requests and shutting down...

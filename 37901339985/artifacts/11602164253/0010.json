@@ -1,0 +1,37 @@
+{
+  "image": "images/vllm.sqsh",
+  "source": "docker.io/vllm/vllm-openai:v0.30.0",
+  "source_digest": "sha256:8a69ffad015f138d7170c4ddc429e230a3bc1c1719f67e14324749df200a4b90",
+  "source_build_commit": "ced6857afa0ea7b2e3f0846a62e1394e90f15607",
+  "oci_layout_manifest": "sha256:17a8b8d8b2d81b6db0fa31adc13ea5a4b7cc7b41fdd776f4262d7df1ce879bc2",
+  "versions": {
+    "cuda": "13.0.2",
+    "vllm": "0.30.0",
+    "nixl": "1.4.1"
+  },
+  "build": "Skopeo OCI copy; Umoci rootless unpack; mksquashfs -all-root -no-xattrs -noappend -comp gzip -Xcompression-level 2 -processors 4 -mem 4G",
+  "size_bytes": 8551739392,
+  "sha256": "2012b52332deaecdab9a7a397a35412b7e098c40308f93560c7a419519ebfb0e",
+  "verification": "OCI layout, SquashFS metadata and packaged vLLM/NIXL files checked; no GPU runtime test",
+  "local_image_adaptation": {
+    "base_sha256": "fd906d3a5a924bf0874d235a0cc3a9f28502b0a2f26e8921faae94ea3e88c211",
+    "changes": [
+      "Add NVIDIA_VISIBLE_DEVICES=all to /etc/environment",
+      "Add NVIDIA_DRIVER_CAPABILITIES=compute,utility to /etc/environment"
+    ],
+    "method": "enroot create and export; packaged software unchanged",
+    "utc": "2026-10-02T07:42:32.235006+00:00",
+    "note": "OCI metadata describes the base image before this local SquashFS adaptation."
+  },
+  "local_image_adaptations": [
+    {
+      "base_sha256": "fb38ef1c6b22021446277379078ed40848c0eb1113cceb2f995c07074e282c6d",
+      "changes": [
+        "Prepend /usr/local/cuda/bin to existing PATH in /etc/environment"
+      ],
+      "utc": "2026-10-06T06:44:57.778394+00:00",
+      "method": "enroot create/export; installed packages and serving settings unchanged"
+    }
+  ],
+  "compiler_check": "nvcc resolves through image PATH and nvcc --version succeeds in CPU-only user-namespace chroot; full GPU benchmark not re-run"
+}

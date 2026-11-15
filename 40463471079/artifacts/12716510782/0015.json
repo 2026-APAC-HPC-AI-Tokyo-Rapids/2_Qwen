@@ -1,0 +1,98 @@
+{
+  "framework": "sglang",
+  "concurrency": 240,
+  "workload": "official",
+  "images": {
+    "sglang": {
+      "path": "/scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh",
+      "sha256": "1f247668933c7252d3dfbe8f6c23897d354f095d56842788d4415a85d7dc5e55",
+      "size_bytes": 12272513024,
+      "provenance": "/scratch/home/ACCOUNT/qwen/containers/40197369083.container-sidecar.json"
+    },
+    "vllm": {
+      "path": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.sqsh",
+      "sha256": "2012b52332deaecdab9a7a397a35412b7e098c40308f93560c7a419519ebfb0e",
+      "size_bytes": 8551739392,
+      "provenance": "/scratch/home/ACCOUNT/qwen/framework-comparison/images/vllm.provenance.json"
+    }
+  },
+  "speculation": {
+    "algorithm": "EAGLE3",
+    "draft_tokens": 4,
+    "steps": 3,
+    "draft_repository": "nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507",
+    "draft_revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224"
+  },
+  "decode_max_total_tokens": 393216,
+  "decode_max_running_requests": 176,
+  "decode_extra_slots": 20,
+  "decode_polling_interval": 1,
+  "decode_cuda_graph_bs": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    10,
+    12,
+    13,
+    14,
+    15,
+    16,
+    18,
+    20,
+    22,
+    24,
+    26,
+    28,
+    30,
+    32,
+    34,
+    36,
+    38,
+    40,
+    42,
+    44
+  ],
+  "prefill": {
+    "workers": 3,
+    "tp": 4,
+    "dp": 4,
+    "ep": 4,
+    "chunked_prefill_size": 16384,
+    "expert_location": "configs/firmus-prefill-replica4-expert-location.json",
+    "ep_num_redundant_experts": 12,
+    "moe_a2a_backend": "megamoe",
+    "moe_runner_backend": "deep_gemm",
+    "optimistic_prefill_attempts": 2
+  },
+  "decode_dp_size": 4,
+  "sglang_overlay_patches": [
+    "patches/sglang/add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-attention-contiguous-kv.patch",
+    "patches/sglang/megamoe-prefill-replicas.patch",
+    "patches/sglang/verify-attention-candidates.patch",
+    "patches/sglang/decode-verify-scheduler-metadata.patch",
+    "patches/sglang/decode-fusions.patch",
+    "patches/sglang/decode-dense-gemm.patch",
+    "patches/sglang/decode-fa3-verify.patch",
+    "patches/sglang/decode-routing-capture.patch",
+    "patches/sglang/prefill-fp8-integration.patch",
+    "patches/sglang/prefill-qkv-fast-fp8.patch",
+    "patches/sglang/decode-qknorm-fast-fp8.patch",
+    "patches/sglang/decode-add-rmsnorm-group-quant.patch",
+    "patches/sglang/prefill-async-admission.patch"
+  ],
+  "deep_gemm_overlay_patches": [
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-sf128.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-fc2-swizzle.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-2wg-host-epi.patch",
+    "patches/deep-gemm-overlay/sm90-swap-ab-geometry-guard.patch",
+    "patches/deep-gemm-overlay/sm90-decode-swapab-prefetch.patch",
+    "patches/deep-gemm-overlay/sm90-decode-independent-wg.patch",
+    "patches/deep-gemm-overlay/sm90-prefill-wg1-skip.patch"
+  ]
+}

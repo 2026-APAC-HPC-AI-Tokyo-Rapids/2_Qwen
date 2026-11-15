@@ -1,0 +1,40 @@
+{
+  "schema": "firmus-eagle-drafts/v1",
+  "scope": "128 official synthetic requests each, concurrency32; single TP4 per draft; acceptance only, not serving throughput",
+  "drafts": [
+    {
+      "name": "nebius",
+      "revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224",
+      "draft_precision": "fp8",
+      "accept_length_including_bonus": 2.2509615384615387,
+      "accepted_draft_length": 1.2509615384615387,
+      "relative_to_nebius": 1.0,
+      "requests": 128,
+      "verify_steps": 11362
+    },
+    {
+      "name": "meituan",
+      "revision": "7f8040f188bc80e309ddb2a25faf30550b356b72",
+      "draft_precision": "fp8",
+      "accept_length_including_bonus": 1.8600202869149398,
+      "accepted_draft_length": 0.8600202869149398,
+      "relative_to_nebius": 0.8263225537768207,
+      "requests": 128,
+      "verify_steps": 13732
+    }
+  ],
+  "excluded": [
+    {
+      "name": "redhat",
+      "repository": "RedHatAI/Qwen3-235B-A22B-Instruct-2507-speculator.eagle3",
+      "revision": "87cd7aa934131942f5d7277617d7d6020f2df7f1",
+      "weight_sha256": "d591c7a357a66ad97225aec0e350ef79ccf10f97a41aefdf0f43d0228bcc984a",
+      "weight_bytes": 2390403048,
+      "original_config_sha256": "b3b2b110f782f2de2149a8fa98987c4ed96bbebad284ec51a997531755850985",
+      "header_sha256": "01e99bc579f1e61a27fe5157af7cb94152a1cd20210a3a890124d7d6c9f953d4",
+      "draft_precision": null,
+      "enabled": false,
+      "reason": "Excluded: Eagle3DraftModel/speculators config is not native in pinned SGLang. norm_before_residual=true uses normalized hidden states as the attention residual; LlamaForCausalLMEagle3 uses unnormalized hidden states. This input-dependent RMSNorm cannot be converted by tensor renaming or constant weight conversion. A faithful forward implementation is outside this diagnostic; no weights or computation changed."
+    }
+  ]
+}

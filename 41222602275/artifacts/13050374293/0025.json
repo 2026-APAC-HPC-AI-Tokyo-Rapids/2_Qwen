@@ -1,0 +1,212 @@
+[
+  {
+    "name": "layout-build",
+    "argv": [
+      "nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-ccbin",
+      "/usr/bin/g++",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source",
+      "-I/scratch/home/ACCOUNT/github-actions-work/step.JXkzXmE5wI/workspace/kernels/fa3-verify",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3-split-pv-layout.cu",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/layout-host"
+    ],
+    "exit_code": 0,
+    "seconds": 48.86742925271392
+  },
+  {
+    "name": "layout-check",
+    "argv": [
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/layout-host"
+    ],
+    "exit_code": 0,
+    "seconds": 0.02229478769004345
+  },
+  {
+    "name": "build-split-pv",
+    "argv": [
+      "nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-ccbin",
+      "/usr/bin/g++",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source",
+      "-I/scratch/home/ACCOUNT/github-actions-work/step.JXkzXmE5wI/workspace/kernels/fa3-verify",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "-c",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3-split-pv.cu",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/split-pv.o"
+    ],
+    "exit_code": 0,
+    "seconds": 52.954527609050274
+  },
+  {
+    "name": "build-control",
+    "argv": [
+      "nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-ccbin",
+      "/usr/bin/g++",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source",
+      "-I/scratch/home/ACCOUNT/github-actions-work/step.JXkzXmE5wI/workspace/kernels/fa3-verify",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "-c",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3-prefill-pipe.cu",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/control.o"
+    ],
+    "exit_code": 0,
+    "seconds": 50.758471651002765
+  },
+  {
+    "name": "build-scheduler",
+    "argv": [
+      "nvcc",
+      "-O3",
+      "-std=c++17",
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda",
+      "-lineinfo",
+      "-gencode=arch=compute_90a,code=sm_90a",
+      "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
+      "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
+      "-DNDEBUG",
+      "-Xptxas=-v,--warn-on-spills",
+      "-Xcompiler=-fPIC",
+      "-Dflash=apac_fa3_private",
+      "-DFlash_fwd_params=ApacFA3VerifyParams",
+      "-ccbin",
+      "/usr/bin/g++",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source",
+      "-I/scratch/home/ACCOUNT/github-actions-work/step.JXkzXmE5wI/workspace/kernels/fa3-verify",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/include",
+      "-I/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/cutlass/cutlass-57e3cfb47a2d9e0d46eb6335c3dc411498efa198/tools/util/include",
+      "-c",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/fa3/sgl-flash-attn-f89bc2306632d1ec5f97b014dded4254f5b4a907/hopper/flash_prepare_scheduler.cu",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/scheduler.o"
+    ],
+    "exit_code": 0,
+    "seconds": 29.496511537581682
+  },
+  {
+    "name": "link-split-pv",
+    "argv": [
+      "nvcc",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/split-pv.o",
+      "--shared",
+      "--cudart",
+      "static",
+      "-Xlinker=-Bsymbolic",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/split-pv.so"
+    ],
+    "exit_code": 0,
+    "seconds": 0.4140188228338957
+  },
+  {
+    "name": "sass-split-pv",
+    "argv": [
+      "cuobjdump",
+      "--dump-sass",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/split-pv.o"
+    ],
+    "exit_code": 0,
+    "seconds": 0.3906837161630392
+  },
+  {
+    "name": "resources-split-pv",
+    "argv": [
+      "cuobjdump",
+      "--dump-resource-usage",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/split-pv.o"
+    ],
+    "exit_code": 0,
+    "seconds": 0.02268187887966633
+  },
+  {
+    "name": "link-control",
+    "argv": [
+      "nvcc",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/control.o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/scheduler.o",
+      "--shared",
+      "--cudart",
+      "static",
+      "-Xlinker=-Bsymbolic",
+      "-o",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/control.so"
+    ],
+    "exit_code": 0,
+    "seconds": 0.45409507118165493
+  },
+  {
+    "name": "sass-control",
+    "argv": [
+      "cuobjdump",
+      "--dump-sass",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/control.o"
+    ],
+    "exit_code": 0,
+    "seconds": 0.40923165157437325
+  },
+  {
+    "name": "resources-control",
+    "argv": [
+      "cuobjdump",
+      "--dump-resource-usage",
+      "/scratch/home/ACCOUNT/qwen/runs/kernel-probe-41222602275-1.4HFFxAFW/source/control.o"
+    ],
+    "exit_code": 0,
+    "seconds": 0.021839750930666924
+  }
+]

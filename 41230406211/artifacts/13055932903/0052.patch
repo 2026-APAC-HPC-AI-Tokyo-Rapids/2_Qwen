@@ -1,0 +1,41 @@
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -55,6 +55,7 @@
+     static constexpr bool PackGQA_TMA = PackGQA && kBlockH_ > 1;
+     static constexpr bool Split = Split_;
+     static constexpr bool V_colmajor = V_colmajor_;
++    static constexpr bool PrefillPVLive = (PrefillVariant & 16) != 0;
+     static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
+     static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
+     static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
+@@ -1430,7 +1431,29 @@
+                     pipeline_v.consumer_release(smem_pipe_read_v);  // release V
+                 }
+                 if constexpr (Is_FP8 && !V_colmajor) { flash::permute_Cregs_fp8(tSrS); }
+-                convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
++                if constexpr (PrefillPVLive) {
++                    // Keep every old PV A register live through softmax and
++                    // conversion. params.headdim_v is runtime 128 on this bounded path,
++                    // giving an identity PRMT selector without constant folding.
++                    auto next_p = make_tensor_like<Element>(tOrP);
++                    convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), next_p);
++                    auto current = recast<uint32_t>(next_p);
++                    auto previous = recast<uint32_t>(tOrP);
++                    uint32_t selector = params.headdim_v + 0x3190;
++                    // Make the selector depend on every converted word.
++                    // The runtime selector selects only the first input,
++                    // so its value stays 0x3210 for the bounded H128 path.
++                    uint32_t checksum = 0;
++                    #pragma unroll
++                    for (int i = 0; i < size(current); ++i) { checksum ^= current(i); }
++                    asm volatile("prmt.b32 %0, %1, %2, %3;" : "=r"(selector) : "r"(0x3210), "r"(checksum), "r"(selector));
++                    #pragma unroll
++                    for (int i = 0; i < size(previous); ++i) {
++                        asm volatile("prmt.b32 %0, %1, %2, %3;" : "=r"(previous(i)) : "r"(current(i)), "r"(previous(i)), "r"(selector));
++                    }
++                } else {
++                    convert_type_out(make_tensor(tSrS.data(), tOrP.layout()), tOrP);
++                }
+                 if constexpr (Is_FP8 && V_colmajor) { flash::permute_Aregs_fp8(tOrP); }
+                 if constexpr (!MmaPV_is_RS) { write_P_to_smem(tOrP); }
+                 if constexpr (!RescaleOBeforeGemm) { prefill_rescale(softmax, tOrO, scores_scale); }

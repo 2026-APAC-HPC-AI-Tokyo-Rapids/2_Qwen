@@ -1,0 +1,68 @@
+Tue Oct 27 07:01:48 UTC 2026
+{
+  "commit": "d78916edbc29208f2d3c86002357a412ba673296",
+  "kernel": "Prefill QKV exact paired rounding",
+  "scope": "one GPU, no serving",
+  "sglang_overlays": {
+    "patches/sglang/add-rmsnorm-group-quant.patch": "0ea92882f7ba4d1804eeb54fe81d8d610796fa890c61c3039922bd49d28bf40c",
+    "patches/sglang/prefill-attention-contiguous-kv.patch": "d58039ee0149e433e39f3ab13f8be7775cfb4861dd770fd8211304feff027e1e",
+    "patches/sglang/megamoe-prefill-replicas.patch": "6f2b64cdc4f05ea31af7be60c313d5365646885afef73a3d2ce3f3a8e9846ea4",
+    "patches/sglang/verify-attention-candidates.patch": "bc4a3a2a6aa786e19dc57cb489c742f4e47e27d357dbe33b7cc6df83e89f829e",
+    "patches/sglang/decode-verify-scheduler-metadata.patch": "5a86b227fea9225109999d48505efd510dae0f34b93d2bedb9fedbf8e6a8c652",
+    "patches/sglang/decode-fusions.patch": "d779e4e864e65554ea527bfd0a2c200bcd154c83ae48aaf8427b1ff22f650574",
+    "patches/sglang/decode-dense-gemm.patch": "a5049b688615a8e89c1790ce4b3d190a396db33e1182bb4dcde38ebc1235111e",
+    "patches/sglang/decode-fa3-verify.patch": "e5623b0cd28cfa81e897a1847a602f418acd500112f4b24d858b95dceda4cfa8",
+    "patches/sglang/decode-routing-capture.patch": "a9c26d49a24feb1b989759ce8d07949a6d3c874c999c83bb50d6006b8f98d8a9",
+    "patches/sglang/prefill-fp8-integration.patch": "99e97664d83610c539eaa62e992a396f4d5bb1981760934ca3df3bb5c3de42ef",
+    "patches/sglang/prefill-qkv-fast-fp8.patch": "11bb55ee3fc86db2c4b84254033105863d0db333919e4d771b26a04612d043a6",
+    "patches/sglang/decode-qknorm-fast-fp8.patch": "e08c44f43ceded413c1652a02c9f65fcb41d9eaafc068c749cb1d5786dd0ad10",
+    "patches/sglang/decode-add-rmsnorm-group-quant.patch": "71375901315fc74fe13551fc8de985e1617d56f438d5deb3b091c1be5817b03a",
+    "patches/sglang/prefill-async-admission.patch": "3291c98dbb54cedc3b2e758c9e25caeea60c719ab4b9327d1caf9d83d484ee3b"
+  },
+  "sources": {
+    "prefill-memory.py": "f7ae33c5e8b19e2fd366cbe8321ce314223d3f9315301a06faaaed8a7a4fb117",
+    "prefill-paired-round.py": "dbf04c40fe3e46d03ecbf654aa88e7512938ccf6606605cf86d202d550e1e165",
+    "probe": "475622923fc487c397c87bc8f33477ba06dc92ec63fc2ba57343cc76d931a465",
+    "rope-control.cuh": "d84e6077018f58ab5df42087f5c6a00c75b40e621362b1037eb4da56a65c7c35",
+    "prepare-prefill-memory.sh": "11a2c4530f3528a4996aa540213653389fbb2be28372ec2ae55a0d12cf296fec",
+    "firmus-framework.json": "d9156f2518c6010053f70d4f2bb0af3ee36b9bf310474ea1244182d0c59b888c"
+  },
+  "cluster": "firmus",
+  "benchmark": "kernels/probes/prepare-prefill-memory.sh",
+  "image": "/scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh",
+  "cuda": "13.0",
+  "cxx": "/usr/bin/g++",
+  "allocated_gpus": 8,
+  "probe_gpus": 1
+}
+trial=1 Prefill memory; no NCU instrumentation
+{"rows": 0, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 0, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 1, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 1, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 7, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 7, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 8, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 8, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 9, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 9, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 31, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 31, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 32, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 32, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 33, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 33, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 129, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 129, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": false}
+{"rows": 3986, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 3986, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 4032, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 4032, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 4096, "dtype": "torch.int32", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 4096, "dtype": "torch.int64", "finite_and_nonfinite_five_buffers_bitwise": true, "changed_input_graph_bitwise": true}
+{"rows": 3986, "dtype": "torch.int64", "samples_us": {"control": [52.38400027155876, 52.49600112438202, 52.588000893592834, 52.65999957919121, 52.70000174641609, 52.4200014770031, 52.691999822854996, 52.696000784635544, 52.73199826478958, 52.799999713897705, 52.65599861741066, 52.62799933552742, 52.55600064992905], "paired": [55.41199818253517, 55.4720014333725, 55.2080012857914, 55.17600104212761, 55.42000010609627, 55.403999984264374, 55.080000311136246, 55.30399829149246, 55.240001529455185, 55.45999854803085, 55.15599995851517, 55.084001272916794]}, "order": ["control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control"], "median_us": {"control": 52.65599861741066, "paired": 55.27199991047382}, "ratio": 1.0496809739013893}
+{"rows": 4032, "dtype": "torch.int64", "samples_us": {"control": [52.91999876499176, 53.08400094509125, 52.84800007939339, 53.036000579595566, 53.00400033593178, 52.988000214099884, 52.9399998486042, 52.932001650333405, 52.97999829053879, 52.94400081038475, 52.96799913048744, 53.14800143241882, 52.88400128483772], "paired": [55.8600015938282, 55.743999779224396, 55.82800135016441, 55.53999915719032, 55.75200170278549, 55.695999413728714, 55.83199858665466, 55.57199940085411, 55.84000051021576, 55.62400072813034, 55.67999929189682, 55.56799843907356]}, "order": ["control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control"], "median_us": {"control": 52.96799913048744, "paired": 55.719999596476555}, "ratio": 1.0519559075510767}
+{"rows": 4096, "dtype": "torch.int64", "samples_us": {"control": [53.58799919486046, 53.68800088763237, 53.66799980401993, 53.679998964071274, 53.75999957323074, 53.81999909877777, 53.7480004131794, 53.6159984767437, 53.80000174045563, 53.65600064396858, 53.807999938726425, 53.911998867988586, 53.73600125312805], "paired": [56.47199973464012, 56.61600083112717, 56.540001183748245, 56.63599818944931, 56.384000927209854, 56.45599961280823, 56.5360002219677, 56.34799972176552, 56.432001292705536, 56.540001183748245, 56.36399984359741, 56.407999247312546]}, "order": ["control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control", "paired", "paired", "control", "control"], "median_us": {"control": 53.73600125312805, "paired": 56.463999673724174}, "ratio": 1.0507666807536655}
+PASS exact QKV paired gate; eligible=False
+Tue Oct 27 07:02:26 UTC 2026
+probe_exit_code=0

@@ -1,0 +1,495 @@
+
+===== 0_archive-artifacts.txt =====
+﻿2026-11-04T07:57:40.6391743Z Current runner version: '2.338.0'
+2026-11-04T07:57:40.6399178Z Runner name: 'home-lab-5f6658e69879'
+2026-11-04T07:57:40.6400315Z Runner group name: 'default'
+2026-11-04T07:57:40.6401479Z Machine name: '5f6658e69879'
+2026-11-04T07:57:40.6406109Z ##[group]GITHUB_TOKEN Permissions
+2026-11-04T07:57:40.6408741Z Actions: write
+2026-11-04T07:57:40.6409519Z Contents: read
+2026-11-04T07:57:40.6410258Z Metadata: read
+2026-11-04T07:57:40.6411079Z ##[endgroup]
+2026-11-04T07:57:40.6413824Z Secret source: Actions
+2026-11-04T07:57:40.6415061Z Cache mode: write
+2026-11-04T07:57:40.6415955Z Prepare workflow directory
+2026-11-04T07:57:40.6957440Z Prepare all required actions
+2026-11-04T07:57:40.7014836Z Getting action download info
+2026-11-04T07:57:41.4179525Z Download action repository 'actions/download-artifact@v8' (SHA:9000827ccba6bdab643e8b6fd33ac0654aef8333)
+2026-11-04T07:57:41.9356350Z Complete job name: archive-artifacts
+2026-11-04T07:57:42.0299750Z ##[group]Run actions/download-artifact@v8
+2026-11-04T07:57:42.0301109Z with:
+2026-11-04T07:57:42.0301828Z   path: artifacts
+2026-11-04T07:57:42.0302774Z   pattern: qwen-firmus-submission-41781374312-1
+2026-11-04T07:57:42.0303768Z   merge-multiple: false
+2026-11-04T07:57:42.0304633Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-11-04T07:57:42.0305599Z   run-id: 41781374312
+2026-11-04T07:57:42.0306330Z   skip-decompress: false
+2026-11-04T07:57:42.0307111Z   digest-mismatch: error
+2026-11-04T07:57:42.0308152Z env:
+2026-11-04T07:57:42.0308898Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:57:42.0310143Z   QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+2026-11-04T07:57:42.0311310Z ##[endgroup]
+2026-11-04T07:57:42.8320431Z Found 1 artifact(s)
+2026-11-04T07:57:42.8327089Z Filtering artifacts by pattern 'qwen-firmus-submission-41781374312-1'
+2026-11-04T07:57:42.8356817Z Preparing to download the following artifacts:
+2026-11-04T07:57:42.8366383Z - qwen-firmus-submission-41781374312-1 (ID: 13304983126, Size: 99379128, Expected Digest: sha256:ab6796a428a545461aa56711ea6cf99f130ff37351232a30ca034068fc5bfe3f)
+2026-11-04T07:57:43.9859135Z Redirecting to blob download url: https://productionresultssa5.blob.core.windows.net/actions-results/00000000-0000-0000-0000-000000000000/workflow-job-run-7946790d-9cb3-50db-82a7-ca1bfdc7752e/artifacts/b48b4f09d8cd93f384310e30dd9edbb6a68ae90064956d52d0626682db5a9932.zip
+2026-11-04T07:57:43.9867955Z Starting download of artifact to: /opt/actions-runner/_work/2_Qwen/2_Qwen/artifacts
+2026-11-04T07:57:44.6954899Z (node:942) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-11-04T07:57:44.6960193Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-04T07:57:55.6524369Z SHA256 digest of downloaded artifact is ab6796a428a545461aa56711ea6cf99f130ff37351232a30ca034068fc5bfe3f
+2026-11-04T07:57:55.6553970Z Artifact download completed successfully.
+2026-11-04T07:57:55.6555273Z Total of 1 artifact(s) downloaded
+2026-11-04T07:57:55.6556039Z Download artifact has finished successfully
+2026-11-04T07:57:55.7031291Z ##[group]Run destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
+2026-11-04T07:57:55.7032354Z [36;1mdestination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"[0m
+2026-11-04T07:57:55.7033183Z [36;1mdestination="${destination_parent}/${GITHUB_RUN_ATTEMPT}"[0m
+2026-11-04T07:57:55.7033804Z [36;1mtest -d artifacts[0m
+2026-11-04T07:57:55.7034310Z [36;1mtest -n "$(find artifacts -type f -print -quit)"[0m
+2026-11-04T07:57:55.7034845Z [36;1minstall -d -m 0750 "${destination_parent}"[0m
+2026-11-04T07:57:55.7035496Z [36;1mstaging="$(mktemp -d "${destination_parent}/.${GITHUB_RUN_ATTEMPT}.XXXXXXXXXX")"[0m
+2026-11-04T07:57:55.7036146Z [36;1mtrap 'rm -rf -- "${staging}"' EXIT[0m
+2026-11-04T07:57:55.7036578Z [36;1mcp -a artifacts/. "${staging}/"[0m
+2026-11-04T07:57:55.7037334Z [36;1m(cd "${staging}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)[0m
+2026-11-04T07:57:55.7038666Z [36;1mmv -T -- "${staging}" "${destination}"[0m
+2026-11-04T07:57:55.7039079Z [36;1mtrap - EXIT[0m
+2026-11-04T07:57:55.7039979Z [36;1mprintf 'Archived at archive-host:/srv/qwen-artifacts/%s/%s/\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"[0m
+2026-11-04T07:57:55.7045880Z shell: /opt/actions-runner-shells/home-lab-shell {0}
+2026-11-04T07:57:55.7046316Z env:
+2026-11-04T07:57:55.7046631Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:57:55.7047230Z   QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+2026-11-04T07:57:55.7047993Z ##[endgroup]
+2026-11-04T07:57:56.1183341Z ##[group]Run gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "qwen-firmus-submission-41781374312-1") | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
+2026-11-04T07:57:56.1188632Z [36;1mgh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "qwen-firmus-submission-41781374312-1") | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done[0m
+2026-11-04T07:57:56.1193680Z shell: /opt/actions-runner-shells/home-lab-shell {0}
+2026-11-04T07:57:56.1194387Z env:
+2026-11-04T07:57:56.1194879Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:57:56.1195795Z   QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+2026-11-04T07:57:56.1203796Z   GH_TOKEN: ***
+2026-11-04T07:57:56.1204251Z ##[endgroup]
+2026-11-04T07:57:57.3363822Z Cleaning up orphan processes
+
+===== 1_verify.txt =====
+﻿2026-11-04T05:47:20.3010793Z Current runner version: '2.338.0'
+2026-11-04T05:47:20.3018650Z Runner name: 'home-lab-79132b7713cd'
+2026-11-04T05:47:20.3019749Z Runner group name: 'default'
+2026-11-04T05:47:20.3020890Z Machine name: '79132b7713cd'
+2026-11-04T05:47:20.3024817Z ##[group]GITHUB_TOKEN Permissions
+2026-11-04T05:47:20.3027366Z Actions: read
+2026-11-04T05:47:20.3028087Z Contents: read
+2026-11-04T05:47:20.3028793Z Metadata: read
+2026-11-04T05:47:20.3029541Z ##[endgroup]
+2026-11-04T05:47:20.3032030Z Secret source: Actions
+2026-11-04T05:47:20.3033618Z Cache mode: write
+2026-11-04T05:47:20.3034458Z Prepare workflow directory
+2026-11-04T05:47:20.3557196Z Prepare all required actions
+2026-11-04T05:47:20.3611048Z Getting action download info
+2026-11-04T05:47:21.0876460Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-04T05:47:21.5039928Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-11-04T05:47:22.0666717Z Complete job name: verify
+2026-11-04T05:47:22.1715952Z ##[group]Run actions/checkout@v7
+2026-11-04T05:47:22.1717297Z with:
+2026-11-04T05:47:22.1717963Z   persist-credentials: false
+2026-11-04T05:47:22.1719313Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-11-04T05:47:22.1732303Z   token: ***
+2026-11-04T05:47:22.1733172Z   ssh-strict: true
+2026-11-04T05:47:22.1733859Z   ssh-user: git
+2026-11-04T05:47:22.1734552Z   clean: true
+2026-11-04T05:47:22.1735360Z   sparse-checkout-cone-mode: true
+2026-11-04T05:47:22.1736282Z   fetch-depth: 1
+2026-11-04T05:47:22.1736961Z   fetch-tags: false
+2026-11-04T05:47:22.1737668Z   show-progress: true
+2026-11-04T05:47:22.1738393Z   lfs: false
+2026-11-04T05:47:22.1739044Z   submodules: false
+2026-11-04T05:47:22.1739882Z   set-safe-directory: true
+2026-11-04T05:47:22.1740766Z   allow-unsafe-pr-checkout: false
+2026-11-04T05:47:22.1742228Z env:
+2026-11-04T05:47:22.1743192Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T05:47:22.1744289Z ##[endgroup]
+2026-11-04T05:47:22.2958086Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-11-04T05:47:22.2961040Z ##[group]Getting Git version info
+2026-11-04T05:47:22.2962582Z Working directory is '/opt/actions-runner/_work/2_Qwen/2_Qwen'
+2026-11-04T05:47:22.2964546Z [command]/usr/bin/git version
+2026-11-04T05:47:22.2965400Z git version 2.43.0
+2026-11-04T05:47:22.3012750Z ##[endgroup]
+2026-11-04T05:47:22.3022028Z Temporarily overriding HOME='/opt/actions-runner/_work/_temp/bb98e884-45e5-4af3-9229-8d037947a664' before making global git config changes
+2026-11-04T05:47:22.3025645Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-04T05:47:22.3029212Z [command]/usr/bin/git config --global --add safe.directory /opt/actions-runner/_work/2_Qwen/2_Qwen
+2026-11-04T05:47:22.3070638Z Deleting the contents of '/opt/actions-runner/_work/2_Qwen/2_Qwen'
+2026-11-04T05:47:22.3076398Z ##[group]Determining repository object format
+2026-11-04T05:47:22.3078588Z ##[endgroup]
+2026-11-04T05:47:22.3080304Z ##[group]Initializing the repository
+2026-11-04T05:47:22.3082239Z [command]/usr/bin/git init /opt/actions-runner/_work/2_Qwen/2_Qwen
+2026-11-04T05:47:22.3139827Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-04T05:47:22.3142592Z hint: is subject to change. To configure the initial branch name to use in all
+2026-11-04T05:47:22.3144589Z hint: of your new repositories, which will suppress this warning, call:
+2026-11-04T05:47:22.3145986Z hint: 
+2026-11-04T05:47:22.3146795Z hint: 	git config --global init.defaultBranch <name>
+2026-11-04T05:47:22.3147915Z hint: 
+2026-11-04T05:47:22.3148958Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-04T05:47:22.3151715Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-04T05:47:22.3153989Z hint: 
+2026-11-04T05:47:22.3154639Z hint: 	git branch -m <name>
+2026-11-04T05:47:22.3156293Z Initialized empty Git repository in /opt/actions-runner/_work/2_Qwen/2_Qwen/.git/
+2026-11-04T05:47:22.3162689Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-11-04T05:47:22.3229457Z ##[endgroup]
+2026-11-04T05:47:22.3230775Z ##[group]Disabling automatic garbage collection
+2026-11-04T05:47:22.3232057Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-04T05:47:22.3274237Z ##[endgroup]
+2026-11-04T05:47:22.3275430Z ##[group]Setting up auth
+2026-11-04T05:47:22.3276310Z Removing SSH command configuration
+2026-11-04T05:47:22.3281520Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T05:47:22.3327371Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T05:47:22.3617322Z Removing HTTP extra header
+2026-11-04T05:47:22.3621978Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T05:47:22.3664093Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T05:47:22.3983626Z Removing includeIf entries pointing to credentials config files
+2026-11-04T05:47:22.3988795Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T05:47:22.4030854Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T05:47:22.4354572Z [command]/usr/bin/git config --file /opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-04T05:47:22.4408163Z [command]/usr/bin/git config --local includeIf.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git.path /opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:22.4450887Z [command]/usr/bin/git config --local includeIf.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:22.4494935Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:22.4571471Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:22.4619280Z ##[endgroup]
+2026-11-04T05:47:22.4620771Z ##[group]Fetching the repository
+2026-11-04T05:47:22.4632955Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +923a34143e53d364d47c05680ea98e4954f76e67:refs/remotes/origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.1634548Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-11-04T05:47:24.1637664Z  * [new ref]         923a34143e53d364d47c05680ea98e4954f76e67 -> origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.1667391Z [command]/usr/bin/git branch --list --remote origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.1707905Z   origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.1725525Z [command]/usr/bin/git rev-parse refs/remotes/origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.1762273Z 923a34143e53d364d47c05680ea98e4954f76e67
+2026-11-04T05:47:24.1766678Z ##[endgroup]
+2026-11-04T05:47:24.1768707Z ##[group]Determining the checkout info
+2026-11-04T05:47:24.1771129Z ##[endgroup]
+2026-11-04T05:47:24.1772905Z [command]/usr/bin/git sparse-checkout disable
+2026-11-04T05:47:24.1824384Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-04T05:47:24.1877975Z ##[group]Checking out the ref
+2026-11-04T05:47:24.1880238Z [command]/usr/bin/git checkout --progress --force -B submission/pp4-r25-20261104 refs/remotes/origin/submission/pp4-r25-20261104
+2026-11-04T05:47:24.4445602Z Switched to a new branch 'submission/pp4-r25-20261104'
+2026-11-04T05:47:24.4447537Z branch 'submission/pp4-r25-20261104' set up to track 'origin/submission/pp4-r25-20261104'.
+2026-11-04T05:47:24.4498642Z ##[endgroup]
+2026-11-04T05:47:24.4584168Z [command]/usr/bin/git log -1 --format=%H
+2026-11-04T05:47:24.4630966Z 923a34143e53d364d47c05680ea98e4954f76e67
+2026-11-04T05:47:24.4651623Z ##[group]Removing auth
+2026-11-04T05:47:24.4655186Z Removing SSH command configuration
+2026-11-04T05:47:24.4677014Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T05:47:24.4739928Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T05:47:24.5110790Z Removing HTTP extra header
+2026-11-04T05:47:24.5111899Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T05:47:24.5155329Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T05:47:24.5472179Z Removing includeIf entries pointing to credentials config files
+2026-11-04T05:47:24.5475816Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T05:47:24.5508314Z includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git.path
+2026-11-04T05:47:24.5509442Z includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-11-04T05:47:24.5510457Z includeif.gitdir:/github/workspace/.git.path
+2026-11-04T05:47:24.5511284Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-04T05:47:24.5519633Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git.path
+2026-11-04T05:47:24.5553413Z /opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:24.5563686Z [command]/usr/bin/git config --local --unset includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git.path \/opt\/actions\-runner\/_work\/_temp\/git\-credentials\-89833ba1\-aee6\-4635\-a84a\-3b18cbc9dece\.config
+2026-11-04T05:47:24.5606430Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-11-04T05:47:24.5635866Z /opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:24.5646586Z [command]/usr/bin/git config --local --unset includeif.gitdir:/opt/actions-runner/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/opt\/actions\-runner\/_work\/_temp\/git\-credentials\-89833ba1\-aee6\-4635\-a84a\-3b18cbc9dece\.config
+2026-11-04T05:47:24.5688787Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-04T05:47:24.5727018Z /github/runner_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:24.5737374Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-89833ba1\-aee6\-4635\-a84a\-3b18cbc9dece\.config
+2026-11-04T05:47:24.5784279Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-04T05:47:24.5813865Z /github/runner_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config
+2026-11-04T05:47:24.5824541Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-89833ba1\-aee6\-4635\-a84a\-3b18cbc9dece\.config
+2026-11-04T05:47:24.5881900Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T05:47:24.6191049Z Removing credentials config '/opt/actions-runner/_work/_temp/git-credentials-89833ba1-aee6-4635-a84a-3b18cbc9dece.config'
+2026-11-04T05:47:24.6199042Z ##[endgroup]
+2026-11-04T05:47:24.6496575Z ##[group]Run runtime_dir="${RUNTIME_ROOT}/submission-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+2026-11-04T05:47:24.6497505Z [36;1mruntime_dir="${RUNTIME_ROOT}/submission-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"[0m
+2026-11-04T05:47:24.6498111Z [36;1mtest ! -e "${runtime_dir}"[0m
+2026-11-04T05:47:24.6498602Z [36;1mprintf 'runtime_dir=%s\n' "${runtime_dir}" >>"${GITHUB_OUTPUT}"[0m
+2026-11-04T05:47:24.6500169Z [36;1msubmission/run/prepare.sh "${runtime_dir}" /scratch/home/ACCOUNT/qwen/containers/41729881283.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /scratch/home/ACCOUNT/qwen/framework-comparison/sources/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e[0m
+2026-11-04T05:47:24.6506276Z shell: /opt/actions-runner-shells/firmus-shell --github-shell {0}
+2026-11-04T05:47:24.6506772Z env:
+2026-11-04T05:47:24.6507104Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T05:47:24.6507508Z ##[endgroup]
+2026-11-04T05:48:51.3980920Z 
+2026-11-04T05:48:51.6965177Z Fetching 3 files:   0%|          | 0/3 [00:00<?, ?it/s]Downloading 'README.md' to '/scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/.cache/huggingface/download/Xn7B-BWUGOee2Y6hCZtEhtFu4BE=.5d3d250a52a177eca180739bac6b5af9912fbcd2.incomplete'
+2026-11-04T05:48:51.6969551Z Download complete. Moving file to /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/README.md
+2026-11-04T05:48:51.6970926Z 
+2026-11-04T05:48:51.8981920Z Fetching 3 files:  33%|███▎      | 1/3 [00:00<00:00,  3.53it/s]Downloading 'config.json' to '/scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/.cache/huggingface/download/8_PA_wEVGiVa2goH2H4KQOQpvVY=.e7eb50e87b4a43ac1a5c21f9ec9f07d97fd457ce.incomplete'
+2026-11-04T05:48:51.8983841Z Download complete. Moving file to /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/config.json
+2026-11-04T05:48:51.8984388Z 
+2026-11-04T05:48:52.1786851Z Fetching 3 files:  67%|██████▋   | 2/3 [00:00<00:00,  3.79it/s]Downloading 'model.safetensors' to '/scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/.cache/huggingface/download/xGOKKLRSlIhH692hSVvI1-gpoa8=.bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86.incomplete'
+2026-11-04T05:49:03.8131441Z Download complete. Moving file to /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft/model.safetensors
+2026-11-04T05:49:03.8133182Z 
+2026-11-04T05:49:03.8134078Z Fetching 3 files: 100%|██████████| 3/3 [00:12<00:00,  4.14s/it]
+2026-11-04T05:49:03.8135492Z Fetching 3 files: 100%|██████████| 3/3 [00:12<00:00,  4.14s/it]
+2026-11-04T05:49:03.8136862Z /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1/draft
+2026-11-04T05:49:10.3878656Z Parallel unsquashfs: Using 1 processor
+2026-11-04T05:49:10.3879189Z 6970 inodes (6944 blocks) to write
+2026-11-04T05:49:10.3879474Z 
+2026-11-04T05:49:10.3879481Z 
+2026-11-04T05:49:10.3879618Z created 6969 files
+2026-11-04T05:49:10.3879963Z created 876 directories
+2026-11-04T05:49:10.3880336Z created 1 symlinks
+2026-11-04T05:49:10.3880744Z created 0 devices
+2026-11-04T05:49:10.3881092Z created 0 fifos
+2026-11-04T05:49:10.3881428Z created 0 sockets
+2026-11-04T05:49:13.0980603Z /scratch/home/ACCOUNT/github-actions-work/step.46VuggU5TJ/workspace/submission/patches/overlay/sglang/02-prefill-attention-contiguous-kv.patch:320: new blank line at EOF.
+2026-11-04T05:49:13.0981921Z +
+2026-11-04T05:49:13.0982225Z warning: 1 line adds whitespace errors.
+2026-11-04T05:49:16.9984152Z Parallel unsquashfs: Using 1 processor
+2026-11-04T05:49:16.9985892Z 889 inodes (990 blocks) to write
+2026-11-04T05:49:16.9987071Z 
+2026-11-04T05:49:16.9987457Z 
+2026-11-04T05:49:16.9987866Z created 889 files
+2026-11-04T05:49:16.9988841Z created 81 directories
+2026-11-04T05:49:16.9989846Z created 0 symlinks
+2026-11-04T05:49:16.9990785Z created 0 devices
+2026-11-04T05:49:16.9991738Z created 0 fifos
+2026-11-04T05:49:16.9992775Z created 0 sockets
+2026-11-04T05:49:18.7486643Z Prepared /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1
+2026-11-04T05:49:18.7490698Z cd /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1 && sbatch scripts/submit.sbatch
+2026-11-04T05:49:23.9189522Z ##[group]Run cd "${RUNTIME_DIR}"
+2026-11-04T05:49:23.9190078Z [36;1mcd "${RUNTIME_DIR}"[0m
+2026-11-04T05:49:23.9191440Z [36;1mjob_id="$(sbatch --parsable --export=ALL --output="${RUNTIME_DIR}/logs/slurm-%j.log" --error="${RUNTIME_DIR}/logs/slurm-%j.stderr.log" --job-name=qwen3_submission "${RUNTIME_DIR}/scripts/submit.sbatch")"[0m
+2026-11-04T05:49:23.9193271Z [36;1m[[ "${job_id}" =~ ^[0-9]+$ ]][0m
+2026-11-04T05:49:23.9193839Z [36;1mprintf 'SLURM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"[0m
+2026-11-04T05:49:23.9194521Z [36;1mprintf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"[0m
+2026-11-04T05:49:23.9196820Z shell: /opt/actions-runner-shells/firmus-shell --github-shell {0}
+2026-11-04T05:49:23.9197413Z env:
+2026-11-04T05:49:23.9197787Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T05:49:23.9198460Z   RUNTIME_DIR: /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1
+2026-11-04T05:49:23.9199066Z ##[endgroup]
+2026-11-04T05:50:03.6098903Z ##[group]Run # The package deliberately omits the diagnostic EAGLE collector.
+2026-11-04T05:50:03.6100697Z [36;1m# The package deliberately omits the diagnostic EAGLE collector.[0m
+2026-11-04T05:50:03.6103001Z [36;1msed '/eagle-acceptance.json/d' platforms/firmus/check-qwen-job.sh >platforms/firmus/check-submission-job.sh[0m
+2026-11-04T05:50:03.6105028Z [36;1mchmod +x platforms/firmus/check-submission-job.sh[0m
+2026-11-04T05:50:03.6106833Z [36;1mscripts/monitor-qwen-job.sh firmus-shell platforms/firmus/check-submission-job.sh[0m
+2026-11-04T05:50:03.6125334Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-04T05:50:03.6126306Z env:
+2026-11-04T05:50:03.6126946Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T05:50:03.6127815Z   SLURM_JOB_ID: 28673
+2026-11-04T05:50:03.6128770Z   RUNTIME_DIR: /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1
+2026-11-04T05:50:03.6129915Z ##[endgroup]
+2026-11-04T05:50:49.5088225Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:52:06.4075352Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:53:16.0052202Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:54:26.5079994Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:55:41.7162723Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:56:51.3035403Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:58:04.8881100Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T05:59:16.3981191Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:00:27.5234811Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:01:39.3037556Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:02:51.1101861Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:04:01.7067505Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:05:14.2997270Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:06:27.5891692Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:07:35.6951021Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:08:46.0041163Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:09:59.8087472Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:11:09.4036469Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:12:21.0962368Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:13:35.2090236Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:14:46.0077568Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:15:55.3036404Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:17:05.4086829Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:18:42.6079013Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:19:59.0124031Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:21:14.4045533Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:22:22.8062162Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:23:38.6066100Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:24:52.3011779Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:26:02.1032683Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:27:18.0983548Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:28:28.4291582Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:29:49.1001915Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:31:05.6048044Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:32:21.7052918Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:33:36.4856178Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:34:53.5057909Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:36:10.9028247Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:37:26.6102088Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:38:42.4081483Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:39:59.6059274Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:41:09.2000394Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:42:22.6120837Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:43:35.1010344Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:44:45.6008720Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:45:57.8010793Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:47:07.6051189Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:48:19.5049179Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:49:29.3990218Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:50:39.1946339Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:51:49.3049473Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:53:00.2843375Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:54:08.4893074Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:55:18.4039244Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:56:27.5845180Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:57:39.1010683Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:58:50.5008252Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T06:59:59.9006119Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:01:09.5052426Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:02:18.4063002Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:03:27.9037396Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:04:44.4046683Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:06:01.6866585Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:07:11.1964154Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:08:23.6830555Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:09:44.1962405Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:10:59.5857100Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:12:09.3007099Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:13:16.9997888Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:14:26.9990746Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:15:38.6005103Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:16:53.9039289Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:18:04.3179360Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:19:13.6041839Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:20:22.4955208Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:21:32.4843782Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:22:42.4994871Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:23:58.2926815Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:25:09.0007779Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:26:24.7039444Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:27:33.9105661Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:28:44.1903161Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:29:57.5935063Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:31:10.6021372Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:32:32.9876691Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:33:42.5949557Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:34:52.9034584Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:36:02.7830729Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:37:14.3857129Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:38:23.1019687Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:39:32.2046092Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:40:39.9019642Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:41:48.7036411Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:43:03.7845089Z scheduler_job_pending=28673 state=PENDING
+2026-11-04T07:44:13.7923703Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:45:22.1945047Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:46:32.4873805Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:47:48.8817571Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:48:57.2841156Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:50:09.3045830Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:51:21.5045613Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:52:33.7004104Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:53:44.2012113Z scheduler_job_pending=28673 state=RUNNING
+2026-11-04T07:54:55.1849549Z 28673|COMPLETED|0:0|00:10:37|2
+2026-11-04T07:54:55.1850718Z [2026-11-04T15:43:40+08:00] job=28673 user=ACCOUNT
+2026-11-04T07:54:55.1854491Z head=g1(198.18.151.51) tail=g4(198.18.151.54) model=/scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 isl=4000 osl=200 N=232 topology=P3-TP1-PP4-D1-TP4-DP4-EP4 kv=fp8_e4m3 speculation=EAGLE3 prefill=megamoe decode=megamoe router=live-prefill-min-load
+2026-11-04T07:54:55.1857750Z prefill-0 ready
+2026-11-04T07:54:55.1858380Z prefill-1 ready
+2026-11-04T07:54:55.1859003Z prefill-2 ready
+2026-11-04T07:54:55.1859609Z decode-0 ready
+2026-11-04T07:54:55.1860208Z READY after 265s
+2026-11-04T07:54:55.1860806Z AIPERF ok
+2026-11-04T07:54:55.2030677Z ##[group]Run destination="${RUNNER_TEMP}/qwen-firmus-submission"
+2026-11-04T07:54:55.2032166Z [36;1mdestination="${RUNNER_TEMP}/qwen-firmus-submission"[0m
+2026-11-04T07:54:55.2033743Z [36;1minstall -d -m 0755 "${destination}"[0m
+2026-11-04T07:54:55.2035271Z [36;1m# Match firmus.yml's bounded retries for the previously observed disconnected artifact reads.[0m
+2026-11-04T07:54:55.2036730Z [36;1mretry_read() {[0m
+2026-11-04T07:54:55.2037464Z [36;1m  local attempt status[0m
+2026-11-04T07:54:55.2038271Z [36;1m  for attempt in 1 2 3 4 5 6; do[0m
+2026-11-04T07:54:55.2039447Z [36;1m    if timeout --foreground 180 "$@"; then return 0; else status=$?; fi[0m
+2026-11-04T07:54:55.2040783Z [36;1m    if (( attempt == 6 )); then return "${status}"; fi[0m
+2026-11-04T07:54:55.2042365Z [36;1m    printf 'Artifact read failed (exit %s); retry in 30s (%s/6).\n' "${status}" "${attempt}" >&2[0m
+2026-11-04T07:54:55.2044184Z [36;1m    sleep 30[0m
+2026-11-04T07:54:55.2045178Z [36;1m  done[0m
+2026-11-04T07:54:55.2046003Z [36;1m}[0m
+2026-11-04T07:54:55.2048174Z [36;1mfor part in logs results source; do retry_read firmus-shell --pull "${RUNTIME_DIR}/${part}" "${destination}/${part}"; done[0m
+2026-11-04T07:54:55.2051914Z [36;1mmarker=$(retry_read firmus-shell "if test -e '${RUNTIME_DIR}/run-success'; then echo present; else echo absent; fi")[0m
+2026-11-04T07:54:55.2062846Z [36;1mif [[ "${marker}" == present ]]; then retry_read firmus-shell --pull "${RUNTIME_DIR}/run-success" "${destination}/run-success"; else [[ "${marker}" == absent ]]; fi[0m
+2026-11-04T07:54:55.2068186Z shell: /opt/actions-runner-shells/home-lab-shell {0}
+2026-11-04T07:54:55.2069214Z env:
+2026-11-04T07:54:55.2069979Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:54:55.2070978Z   SLURM_JOB_ID: 28673
+2026-11-04T07:54:55.2072052Z   RUNTIME_DIR: /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1
+2026-11-04T07:54:55.2073555Z ##[endgroup]
+2026-11-04T07:55:59.6201644Z ##[group]Run actions/upload-artifact@v7
+2026-11-04T07:55:59.6203128Z with:
+2026-11-04T07:55:59.6204021Z   name: qwen-firmus-submission-41781374312-1
+2026-11-04T07:55:59.6205233Z   path: /opt/actions-runner/_work/_temp/qwen-firmus-submission
+2026-11-04T07:55:59.6207204Z   retention-days: 1
+2026-11-04T07:55:59.6207967Z   if-no-files-found: error
+2026-11-04T07:55:59.6208763Z   compression-level: 6
+2026-11-04T07:55:59.6209511Z   overwrite: false
+2026-11-04T07:55:59.6210240Z   include-hidden-files: false
+2026-11-04T07:55:59.6211037Z   archive: true
+2026-11-04T07:55:59.6211841Z env:
+2026-11-04T07:55:59.6213049Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:55:59.6214450Z   SLURM_JOB_ID: 28673
+2026-11-04T07:55:59.6215433Z ##[endgroup]
+2026-11-04T07:55:59.8683115Z With the provided path, there will be 110 files uploaded
+2026-11-04T07:55:59.8688727Z Artifact name is valid!
+2026-11-04T07:55:59.8689341Z Root directory input is valid!
+2026-11-04T07:56:00.5877252Z Uploading artifact: qwen-firmus-submission-41781374312-1.zip
+2026-11-04T07:56:00.5941342Z Beginning upload of artifact content to blob storage
+2026-11-04T07:56:07.6483551Z Uploaded bytes 8388608
+2026-11-04T07:56:12.2387381Z Uploaded bytes 16777216
+2026-11-04T07:56:13.1031005Z Uploaded bytes 25165824
+2026-11-04T07:56:18.5880723Z Uploaded bytes 33554432
+2026-11-04T07:56:19.7841057Z Uploaded bytes 41943040
+2026-11-04T07:56:21.9103128Z Uploaded bytes 50331648
+2026-11-04T07:56:22.6230831Z Uploaded bytes 58720256
+2026-11-04T07:56:27.7055133Z Uploaded bytes 67108864
+2026-11-04T07:56:28.5885381Z Uploaded bytes 75497472
+2026-11-04T07:56:32.8160574Z Uploaded bytes 83886080
+2026-11-04T07:56:33.8764950Z Uploaded bytes 92274688
+2026-11-04T07:56:46.3763840Z Uploaded bytes 99379128
+2026-11-04T07:56:46.5524415Z Finished uploading artifact content to blob storage!
+2026-11-04T07:56:46.5527648Z SHA256 digest of uploaded artifact is ab6796a428a545461aa56711ea6cf99f130ff37351232a30ca034068fc5bfe3f
+2026-11-04T07:56:46.5529532Z Finalizing artifact upload
+2026-11-04T07:56:47.5045043Z Artifact qwen-firmus-submission-41781374312-1 successfully finalized. Artifact ID 13304983126
+2026-11-04T07:56:47.5050335Z Artifact qwen-firmus-submission-41781374312-1 has been successfully uploaded! Final size is 99379128 bytes. Artifact ID is 13304983126
+2026-11-04T07:56:47.5058819Z Artifact download URL: https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41781374312#artifacts
+2026-11-04T07:56:47.5671479Z ##[group]Run score="${RUNNER_TEMP}/qwen-firmus-submission/results/results/score.json"
+2026-11-04T07:56:47.5674001Z [36;1mscore="${RUNNER_TEMP}/qwen-firmus-submission/results/results/score.json"[0m
+2026-11-04T07:56:47.5677408Z [36;1mif [[ -s "${score}" ]]; then jq '{good_output_tokens_per_second,good_request_fraction,request_count,error_request_count,official_validation}' "${score}" >>"${GITHUB_STEP_SUMMARY}"; fi[0m
+2026-11-04T07:56:47.5696365Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-04T07:56:47.5697510Z env:
+2026-11-04T07:56:47.5698301Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:56:47.5699650Z   SLURM_JOB_ID: 28673
+2026-11-04T07:56:47.5700407Z ##[endgroup]
+2026-11-04T07:56:47.6044797Z ##[group]Run state="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"
+2026-11-04T07:56:47.6048649Z [36;1mstate="$(sacct --allocations --jobs="${SLURM_JOB_ID}" --noheader --parsable2 --format=JobID,State | awk -F'|' -v id="${SLURM_JOB_ID}" '$1 == id {print $2}')"[0m
+2026-11-04T07:56:47.6053962Z [36;1mcase "${state}" in COMPLETED|FAILED|TIMEOUT|CANCELLED*|OUT_OF_MEMORY|NODE_FAIL) rm -rf -- "${RUNTIME_DIR:?}";; *) printf 'Preserving runtime and Slurm job %s (state=%s)\n' "${SLURM_JOB_ID}" "${state}";; esac[0m
+2026-11-04T07:56:47.6061551Z shell: /opt/actions-runner-shells/firmus-shell --github-shell {0}
+2026-11-04T07:56:47.6063261Z env:
+2026-11-04T07:56:47.6064010Z   RUNTIME_ROOT: /scratch/home/ACCOUNT/qwen/runs
+2026-11-04T07:56:47.6064869Z   SLURM_JOB_ID: 28673
+2026-11-04T07:56:47.6065809Z   RUNTIME_DIR: /scratch/home/ACCOUNT/qwen/runs/submission-41781374312-1
+2026-11-04T07:56:47.6067196Z ##[endgroup]
+2026-11-04T07:57:31.3824518Z Post job cleanup.
+2026-11-04T07:57:31.4882327Z [command]/usr/bin/git version
+2026-11-04T07:57:31.4927892Z git version 2.43.0
+2026-11-04T07:57:31.4969011Z Temporarily overriding HOME='/opt/actions-runner/_work/_temp/ac766dd0-10b0-4ac3-ae56-c7a19931f634' before making global git config changes
+2026-11-04T07:57:31.4970648Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-04T07:57:31.4975014Z [command]/usr/bin/git config --global --add safe.directory /opt/actions-runner/_work/2_Qwen/2_Qwen
+2026-11-04T07:57:31.5023484Z Removing SSH command configuration
+2026-11-04T07:57:31.5029815Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T07:57:31.5075157Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T07:57:31.5391988Z Removing HTTP extra header
+2026-11-04T07:57:31.5397237Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T07:57:31.5437568Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T07:57:31.5755034Z Removing includeIf entries pointing to credentials config files
+2026-11-04T07:57:31.5761094Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T07:57:31.5800989Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T07:57:31.6261893Z Evaluate and set job outputs
+2026-11-04T07:57:31.6268183Z Set output 'uploaded'
+2026-11-04T07:57:31.6270085Z Cleaning up orphan processes
+
+===== archive-artifacts/system.txt =====
+2026-11-04T07:57:36.4850000Z Evaluating archive-artifacts.if
+2026-11-04T07:57:36.4850000Z Evaluating: (always() && (needs.verify.outputs.uploaded == 'true'))
+2026-11-04T07:57:36.4850000Z Expanded: (true && ('true' == 'true'))
+2026-11-04T07:57:36.4850000Z Result: true
+2026-11-04T07:57:36.4900000Z Requested labels: self-hosted, home-lab
+2026-11-04T07:57:36.4900000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/firmus-submission-check.yml@refs/heads/submission/pp4-r25-20261104
+2026-11-04T07:57:36.4900000Z Waiting for a runner to pick up this job...
+2026-11-04T07:57:36.8500000Z Job is about to start running on the runner: home-lab-5f6658e69879
+===== verify/system.txt =====
+2026-11-04T05:47:16.1940000Z Requested labels: self-hosted, home-lab
+2026-11-04T05:47:16.1940000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/firmus-submission-check.yml@refs/heads/submission/pp4-r25-20261104
+2026-11-04T05:47:16.1940000Z Waiting for a runner to pick up this job...
+2026-11-04T05:47:16.1940000Z Evaluating verify.if
+2026-11-04T05:47:16.1940000Z Evaluating: success()
+2026-11-04T05:47:16.1940000Z Result: true
+2026-11-04T05:47:16.6350000Z Job is about to start running on the runner: home-lab-79132b7713cd

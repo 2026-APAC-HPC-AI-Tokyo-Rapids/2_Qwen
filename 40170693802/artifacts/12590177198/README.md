@@ -1,0 +1,38 @@
+# Artifact 12590177198
+
+aspire-kernel-probe-40170693802-1
+
+Textual evidence is sanitized. The complete original is retained in the private publication backup.
+
+- [logs/logs/build-control.log](0001.log)
+- [logs/logs/build-lazy-counter.log](0002.log)
+- [logs/logs/build-lazy.log](0003.log)
+- [logs/logs/build-nobarrier.log](0004.log)
+- [logs/logs/build-regs232.log](0005.log)
+- [logs/logs/container-sidecar.json](0006.json)
+- [logs/logs/driver.log](0007.log)
+- [logs/logs/extract.log](0008.log)
+- [logs/logs/pbs-accounting.txt](0009.txt)
+- [logs/logs/pbs.log](0010.log)
+- [logs/logs/provenance.json](0011.json)
+- [logs/logs/resource-control.log](0012.log)
+- [logs/logs/resource-lazy-counter.log](0013.log)
+- [logs/logs/resource-lazy.log](0014.log)
+- [logs/logs/resource-nobarrier.log](0015.log)
+- [logs/logs/resource-regs232.log](0016.log)
+- [logs/logs/sass-control.txt](0017.txt.gz)
+- [logs/logs/sass-lazy-counter.txt](0018.txt)
+- [logs/logs/sass-lazy.txt](0019.txt)
+- [logs/logs/sass-nobarrier.txt](0020.txt)
+- [logs/logs/sass-regs232.txt](0021.txt)
+- [logs/logs/su-after.txt](0022.txt)
+- [logs/logs/su-before.txt](0023.txt)
+- [results/results/exit-code](0024.txt)
+- [results/results/fa3-prefill-m1.json](0025.json)
+- [results/results/ptxas.json](0026.json)
+- [results/results/sass-control.txt](0027.txt)
+- [results/results/sass-lazy-counter.txt](0028.txt)
+- [results/results/sass-lazy.txt](0029.txt)
+- [results/results/sass-nobarrier.txt](0030.txt)
+- [results/results/sass-regs232.txt](0031.txt)
+- [results/results/trial-1.log](0032.log)

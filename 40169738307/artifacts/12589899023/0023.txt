@@ -1,0 +1,363 @@
+Static SASS counts; SETMAX register instructions split linear address ranges.
+Every consecutive WARPGROUP.ARRIVE pair in the consumer range is reported; inspect branch targets to identify steady-state versus prologue/epilogue.
+
+FUNCTION _ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi224EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi224ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE
+entry-before-register-split {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 8, 'BAR': 1, 'WARPGROUP.DEPBAR': 0}
+consumer 0xe60..0x11d40 ('USETMAXREG.TRY_ALLOC.CTAPOOL', 'UP0, 0xf0 ') {'LDL': 38, 'STL': 11, 'MUFU.EX2': 342, 'F2FP': 236, 'FMNMX': 490, 'FFMA': 352, 'FADD': 340, 'FMUL': 278, 'PRMT': 18, 'SHFL': 85, 'BAR': 13, 'WARPGROUP.DEPBAR': 6}
+  local 0x11e0 STL [R1+0x4], R14 
+  local 0x1220 STL [R1+0x8], R15 
+  local 0x1260 STL [R1], R2 
+  local 0x13b0 STL [R1+0x18], R22 
+  local 0x13e0 STL [R1+0x14], R21 
+  local 0x1790 LDL.LU R19, [R1+0xc] 
+  local 0x19d0 STL [R1+0xc], R19 
+  local 0x19e0 STL [R1+0x10], R3 
+  local 0x22b0 LDL R2, [R1+0x10] 
+  local 0x3fc0 LDL.LU R17, [R1+0xc] 
+  local 0x4510 STL [R1+0xc], R17 
+  local 0x5bf0 LDL R21, [R1+0x10] 
+  local 0xbdf0 LDL R16, [R1+0x14] 
+  local 0xbe20 LDL R17, [R1+0x18] 
+  local 0xcba0 LDL.LU R4, [R1+0x18] 
+  local 0xcfa0 LDL R23, [R1+0x14] 
+  local 0xd5d0 LDL R16, [R1+0x4] 
+  local 0xd5e0 LDL R17, [R1+0x8] 
+  local 0xd5f0 LDL.LU R18, [R1+0x14] 
+  local 0xd600 LDL R19, [R1+0x10] 
+  local 0xddf0 STL [R1+0x40], R0 
+  local 0xde00 LDL R4, [R1+0x8] 
+  local 0xde10 LDL.LU R0, [R1+0x10] 
+  local 0xe220 LDL.LU R0, [R1+0x40] 
+  local 0xe2f0 LDL R4, [R1+0x4] 
+  local 0xed70 LDL R23, [R1+0x4] 
+  local 0xf4e0 LDL R22, [R1+0x4] 
+  local 0xf9e0 LDL R15, [R1+0x4] 
+  local 0xffa0 STL [R1+0x44], R5 
+  local 0x10010 LDL.LU R5, [R1+0x10] 
+  local 0x10020 STL [R1+0x40], R0 
+  local 0x10040 LDL R2, [R1] 
+  local 0x10050 LDL R0, [R1+0x8] 
+  local 0x100b0 LDL R231, [R1+0x4] 
+  local 0x101f0 LDL.LU R5, [R1+0x44] 
+  local 0x10200 LDL.LU R0, [R1+0x40] 
+  local 0x106d0 LDL R9, [R1+0x18] 
+  local 0x10880 LDL.LU R10, [R1+0x14] 
+  local 0x108f0 LDL R15, [R1+0x10] 
+  local 0x10b80 LDL.LU R11, [R1+0x10] 
+  local 0x10b90 LDL R10, [R1+0x8] 
+  local 0x10c20 LDL R22, [R1+0x4] 
+  local 0x10ed0 LDL R20, [R1+0x4] 
+  local 0x11150 LDL R13, [R1+0x4] 
+  local 0x113c0 LDL R11, [R1+0x4] 
+  local 0x11620 LDL R13, [R1] 
+  local 0x11650 LDL.LU R20, [R1+0x10] 
+  local 0x11660 LDL R19, [R1+0x8] 
+  local 0x11690 LDL R18, [R1+0x4] 
+  ARRIVE-window 0x2270..0x5a90 {'LDL': 2, 'STL': 1, 'MUFU.EX2': 112, 'F2FP': 56, 'FMNMX': 114, 'FFMA': 114, 'FADD': 110, 'FMUL': 0, 'PRMT': 1, 'SHFL': 6, 'BAR': 1, 'WARPGROUP.DEPBAR': 1}
+  ARRIVE-window 0x5a90..0x5bd0 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 0, 'BAR': 0, 'WARPGROUP.DEPBAR': 0}
+  ARRIVE-window 0x5bd0..0x9470 {'LDL': 1, 'STL': 0, 'MUFU.EX2': 114, 'F2FP': 56, 'FMNMX': 116, 'FFMA': 116, 'FADD': 112, 'FMUL': 66, 'PRMT': 1, 'SHFL': 6, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  ARRIVE-window 0x9470..0x95b0 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 0, 'BAR': 0, 'WARPGROUP.DEPBAR': 0}
+  ARRIVE-window 0x95b0..0xbdd0 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 114, 'F2FP': 56, 'FMNMX': 116, 'FFMA': 116, 'FADD': 112, 'FMUL': 66, 'PRMT': 1, 'SHFL': 4, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+producer 0x11d50..0x173f0 ('USETMAXREG.DEALLOC.CTAPOOL', '0x18 ') {'LDL': 35, 'STL': 23, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 114, 'SHFL': 51, 'BAR': 10, 'WARPGROUP.DEPBAR': 0}
+  local 0x11d90 STL [R1+0x28], R2 
+  local 0x12850 STL [R1+0x20], RZ 
+  local 0x12880 STL [R1+0x24], R0 
+  local 0x12890 STL [R1+0x1c], RZ 
+  local 0x12a70 STL [R1+0xc], R8 
+  local 0x12b20 STL [R1+0x10], R3 
+  local 0x12bd0 STL [R1], R2 
+  local 0x12be0 STL [R1+0x1c], RZ 
+  local 0x12bf0 STL [R1+0x24], R0 
+  local 0x12c00 STL [R1+0x20], RZ 
+  local 0x12dc0 STL.64 [R1+0x30], R10 
+  local 0x12f70 STL.64 [R1+0x40], R2 
+  local 0x12f80 LDL.LU.64 R2, [R1+0x30] 
+  local 0x12fb0 LDL.LU.64 R2, [R1+0x40] 
+  local 0x12fe0 STL.64 [R1+0x40], R6 
+  local 0x13010 STL [R1+0x30], R2 
+  local 0x13090 LDL.LU R2, [R1+0x30] 
+  local 0x13110 LDL.LU.64 R6, [R1+0x40] 
+  local 0x133e0 STL.64 [R1+0x38], R18 
+  local 0x13410 STL [R1+0x2c], R19 
+  local 0x13500 LDL.64 R2, [R1+0x38] 
+  local 0x13560 LDL R9, [R1+0x1c] 
+  local 0x13570 LDL R10, [R1+0x24] 
+  local 0x135f0 LDL R18, [R1+0x1c] 
+  local 0x138a0 STL.64 [R1+0x40], R16 
+  local 0x13a20 LDL.LU.64 R16, [R1+0x40] 
+  local 0x13a30 LDL R14, [R1] 
+  local 0x14060 LDL.LU R5, [R1+0x20] 
+  local 0x140b0 STL [R1+0x20], R5 
+  local 0x14140 LDL.LU R9, [R1+0x24] 
+  local 0x14160 LDL.LU R8, [R1+0x1c] 
+  local 0x141d0 STL [R1+0x24], R15 
+  local 0x141e0 STL [R1+0x1c], R14 
+  local 0x14270 LDL.64 R16, [R1+0x38] 
+  local 0x14290 LDL R12, [R1+0x2c] 
+  local 0x14400 LDL R11, [R1+0x1c] 
+  local 0x14800 LDL R9, [R1+0x10] 
+  local 0x14820 LDL R19, [R1+0xc] 
+  local 0x14850 STL [R1+0x40], R0 
+  local 0x15050 LDL.LU R0, [R1+0x40] 
+  local 0x15060 LDL R9, [R1+0x24] 
+  local 0x15070 LDL R8, [R1+0x1c] 
+  local 0x150d0 LDL R2, [R1+0x24] 
+  local 0x150e0 LDL R10, [R1+0x1c] 
+  local 0x15280 LDL R8, [R1+0x24] 
+  local 0x15290 LDL R6, [R1+0x1c] 
+  local 0x152a0 LDL R5, [R1+0x10] 
+  local 0x15330 LDL R6, [R1+0xc] 
+  local 0x15440 LDL.LU R6, [R1+0x24] 
+  local 0x15840 LDL.LU R19, [R1+0x1c] 
+  local 0x15a00 STL [R1+0x1c], R0 
+  local 0x15a10 STL [R1+0x24], R6 
+  local 0x15a30 LDL R0, [R1+0x28] 
+  local 0x16530 LDL.LU R2, [R1+0x20] 
+  local 0x16660 LDL R4, [R1+0x1c] 
+  local 0x16670 LDL.LU R8, [R1+0x24] 
+  local 0x16760 LDL R3, [R1+0x1c] 
+  local 0x167e0 LDL.LU R3, [R1+0x1c] 
+  backedge 0xe00 -> 0xda0 
+  backedge 0xe80 -> 0xe50 
+  backedge 0x9270 -> 0x58b0 
+  arithmetic-backedge-loop 0x58b0..0x9270 {'LDL': 1, 'STL': 0, 'MUFU.EX2': 114, 'F2FP': 56, 'FMNMX': 116, 'FFMA': 116, 'FADD': 112, 'FMUL': 66, 'PRMT': 1, 'SHFL': 6, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  backedge 0xbd30 -> 0x92e0 
+  arithmetic-backedge-loop 0x92e0..0xbd30 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 114, 'F2FP': 56, 'FMNMX': 116, 'FFMA': 116, 'FADD': 112, 'FMUL': 66, 'PRMT': 1, 'SHFL': 4, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  backedge 0x11d20 -> 0x12f0 
+  arithmetic-backedge-loop 0x12f0..0x11d20 {'LDL': 38, 'STL': 8, 'MUFU.EX2': 342, 'F2FP': 236, 'FMNMX': 490, 'FFMA': 352, 'FADD': 340, 'FMUL': 278, 'PRMT': 18, 'SHFL': 85, 'BAR': 9, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x122d0 -> 0x120d0 
+  backedge 0x150c0 -> 0x14170 
+  backedge 0x15f30 -> 0x15d10 
+  backedge 0x16510 -> 0x12c10 
+  backedge 0x168b0 -> 0x16860 
+  backedge 0x16930 -> 0x168f0 
+  backedge 0x16940 -> 0x21f0 
+  arithmetic-backedge-loop 0x21f0..0x16940 {'LDL': 72, 'STL': 27, 'MUFU.EX2': 342, 'F2FP': 236, 'FMNMX': 490, 'FFMA': 352, 'FADD': 340, 'FMUL': 276, 'PRMT': 131, 'SHFL': 135, 'BAR': 19, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x169c0 -> 0x16980 
+  backedge 0x169d0 -> 0x2260 
+  arithmetic-backedge-loop 0x2260..0x169d0 {'LDL': 72, 'STL': 27, 'MUFU.EX2': 342, 'F2FP': 236, 'FMNMX': 490, 'FFMA': 352, 'FADD': 340, 'FMUL': 276, 'PRMT': 131, 'SHFL': 135, 'BAR': 19, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x16a50 -> 0x16a10 
+  backedge 0x16a60 -> 0x59a0 
+  arithmetic-backedge-loop 0x59a0..0x16a60 {'LDL': 70, 'STL': 26, 'MUFU.EX2': 230, 'F2FP': 180, 'FMNMX': 376, 'FFMA': 238, 'FADD': 230, 'FMUL': 276, 'PRMT': 130, 'SHFL': 129, 'BAR': 19, 'WARPGROUP.DEPBAR': 5}
+  backedge 0x16ae0 -> 0x16aa0 
+  backedge 0x16af0 -> 0x5bc0 
+  arithmetic-backedge-loop 0x5bc0..0x16af0 {'LDL': 70, 'STL': 26, 'MUFU.EX2': 230, 'F2FP': 180, 'FMNMX': 376, 'FFMA': 238, 'FADD': 230, 'FMUL': 276, 'PRMT': 130, 'SHFL': 129, 'BAR': 18, 'WARPGROUP.DEPBAR': 5}
+  backedge 0x16b70 -> 0x16b30 
+  backedge 0x16b80 -> 0x93c0 
+  arithmetic-backedge-loop 0x93c0..0x16b80 {'LDL': 69, 'STL': 26, 'MUFU.EX2': 116, 'F2FP': 124, 'FMNMX': 260, 'FFMA': 122, 'FADD': 118, 'FMUL': 210, 'PRMT': 129, 'SHFL': 123, 'BAR': 17, 'WARPGROUP.DEPBAR': 3}
+  backedge 0x16c00 -> 0x16bc0 
+  backedge 0x16c10 -> 0x95a0 
+  arithmetic-backedge-loop 0x95a0..0x16c10 {'LDL': 69, 'STL': 26, 'MUFU.EX2': 116, 'F2FP': 124, 'FMNMX': 260, 'FFMA': 122, 'FADD': 118, 'FMUL': 210, 'PRMT': 129, 'SHFL': 123, 'BAR': 16, 'WARPGROUP.DEPBAR': 3}
+  backedge 0x16c90 -> 0x16c50 
+  backedge 0x16ca0 -> 0xbdc0 
+  arithmetic-backedge-loop 0xbdc0..0x16ca0 {'LDL': 69, 'STL': 26, 'MUFU.EX2': 2, 'F2FP': 68, 'FMNMX': 144, 'FFMA': 6, 'FADD': 6, 'FMUL': 144, 'PRMT': 128, 'SHFL': 119, 'BAR': 14, 'WARPGROUP.DEPBAR': 1}
+  backedge 0x16d00 -> 0x16cc0 
+  backedge 0x16d10 -> 0x135f0 
+  backedge 0x16d70 -> 0x16d30 
+  backedge 0x16d80 -> 0x13730 
+  backedge 0x16df0 -> 0x16db0 
+  backedge 0x16e00 -> 0x14110 
+  backedge 0x16e60 -> 0x16e20 
+  backedge 0x16e70 -> 0x143f0 
+  backedge 0x16ed0 -> 0x16e90 
+  backedge 0x16ee0 -> 0x145e0 
+  backedge 0x16f40 -> 0x16f00 
+  backedge 0x16f50 -> 0x147c0 
+  backedge 0x16fc0 -> 0x16f80 
+  backedge 0x16fd0 -> 0x14800 
+  backedge 0x17030 -> 0x16ff0 
+  backedge 0x17040 -> 0x15270 
+  backedge 0x170a0 -> 0x17060 
+  backedge 0x170b0 -> 0x15320 
+  backedge 0x17110 -> 0x170d0 
+  backedge 0x17120 -> 0x165e0 
+  backedge 0x17180 -> 0x17140 
+  backedge 0x17190 -> 0x16720 
+  backedge 0x171f0 -> 0x171b0 
+  backedge 0x17200 -> 0x16760 
+  backedge 0x17270 -> 0x17230 
+  backedge 0x17280 -> 0x167c0 
+  backedge 0x172e0 -> 0x172a0 
+  backedge 0x172f0 -> 0x167e0 
+  backedge 0x17350 -> 0x17310 
+  backedge 0x17360 -> 0x16830 
+
+FUNCTION _ZN7cutlass13device_kernelIN5flash20enable_sm90_or_laterINS1_16FlashAttnFwdSm90INS1_25CollectiveMainloopFwdSm90ILi2EN4cute5tupleIJNS5_1CILi1EEES8_S8_EEENS6_IJNS7_ILi128EEENS7_ILi192EEESA_EEELi128ENS_12float_e4m3_tEfNS_4arch4Sm90ELb1ELb0ELb0ELb1ELb0ELb0ELb0ELb0ELb1ELb1ELb1ELb0ELb0ENS_10bfloat16_tELb0ELi1EEENS1_21CollectiveEpilogueFwdINS6_IJSA_SA_SB_EEES9_SG_SF_Li256ELb1ELb1ELb0ELb1EEENS1_36VarlenDynamicPersistentTileSchedulerILi128ELi192ELi256ELi128ELb0ELb1ELb1ELb1ELb1ELb1EEEEEEEEEvNT_6ParamsE
+entry-before-register-split {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 8, 'BAR': 1, 'WARPGROUP.DEPBAR': 0}
+consumer 0xe60..0x10bb0 ('USETMAXREG.TRY_ALLOC.CTAPOOL', 'UP0, 0xf0 ') {'LDL': 42, 'STL': 28, 'MUFU.EX2': 294, 'F2FP': 212, 'FMNMX': 442, 'FFMA': 304, 'FADD': 292, 'FMUL': 278, 'PRMT': 18, 'SHFL': 85, 'BAR': 13, 'WARPGROUP.DEPBAR': 6}
+  local 0x1060 STL [R1+0x44], R18 
+  local 0x1180 STL [R1+0x4c], R19 
+  local 0x11b0 STL [R1+0x54], R7 
+  local 0x11f0 STL [R1+0x34], R9 
+  local 0x1240 STL [R1+0x38], R10 
+  local 0x1280 STL [R1+0x3c], R11 
+  local 0x12b0 STL [R1+0x50], R2 
+  local 0x12d0 STL [R1+0x40], RZ 
+  local 0x12f0 STL [R1+0x24], R6 
+  local 0x1340 STL [R1+0x48], R6 
+  local 0x1350 STL [R1+0x1c], R3 
+  local 0x1360 STL [R1+0x18], R0 
+  local 0x1370 LDL.LU R0, [R1+0x3c] 
+  local 0x1440 STL [R1+0xc], R22 
+  local 0x1470 STL [R1+0x20], R14 
+  local 0x1570 STL [R1+0x4], R0 
+  local 0x1630 STL [R1+0x4], R21 
+  local 0x1640 LDL R19, [R1+0x38] 
+  local 0x1660 STL [R1+0x10], R19 
+  local 0x1760 LDL R20, [R1+0x34] 
+  local 0x1b30 STL [R1+0x8], R22 
+  local 0x1b40 STL [R1], R5 
+  local 0x1b50 STL.S16 [R1+0x28], R3 
+  local 0x1b60 STL [R1+0x2c], R0 
+  local 0x1b70 STL [R1+0x30], R2 
+  local 0x1ed0 STL.S16 [R1+0x28], R3 
+  local 0x1f40 STL [R1+0x30], R0 
+  local 0x1f50 STL [R1+0x2c], R2 
+  local 0x21f0 LDL R0, [R1+0x4c] 
+  local 0x2200 LDL R4, [R1+0x40] 
+  local 0x23b0 LDL R2, [R1+0x18] 
+  local 0x23f0 LDL R209, [R1+0x8] 
+  local 0x2430 LDL R8, [R1] 
+  local 0x2470 LDL R6, [R1+0x1c] 
+  local 0x2480 LDL R208, [R1+0x4] 
+  local 0x5510 LDL R13, [R1+0x8] 
+  local 0x5550 LDL R12, [R1+0x18] 
+  local 0x5590 LDL R11, [R1+0x1c] 
+  local 0x55b0 LDL R8, [R1] 
+  local 0x55d0 LDL R7, [R1+0x4] 
+  local 0xab70 LDL R2, [R1+0x20] 
+  local 0xab80 LDL R10, [R1+0xc] 
+  local 0xabc0 LDL.LU R13, [R1+0x38] 
+  local 0xabf0 LDL.LU R11, [R1+0x28] 
+  local 0xad40 LDL.LU R10, [R1+0x2c] 
+  local 0xad90 LDL.LU R9, [R1+0x30] 
+  local 0xadd0 LDL.LU R208, [R1+0x40] 
+  local 0xb0e0 STL [R1+0x40], R208 
+  local 0xb650 STL.64 [R1+0x30], R208 
+  local 0xb660 STL.64 [R1+0x38], R210 
+  local 0xb6b0 LDL R208, [R1+0x54] 
+  local 0xb6e0 LDL R213, [R1+0x18] 
+  local 0xb6f0 LDL.LU R212, [R1+0x20] 
+  local 0xb700 LDL.LU R211, [R1+0xc] 
+  local 0xb730 LDL R210, [R1+0x10] 
+  local 0xb750 LDL R209, [R1+0x8] 
+  local 0xbbe0 LDL R208, [R1+0x24] 
+  local 0xc760 LDL R15, [R1+0x50] 
+  local 0xc780 LDL R14, [R1+0x44] 
+  local 0xed70 LDL R20, [R1+0x48] 
+  local 0xf460 LDL R8, [R1+0xc] 
+  local 0xf610 LDL.LU R0, [R1+0x20] 
+  local 0xf620 LDL R18, [R1+0x10] 
+  local 0xf690 LDL R2, [R1+0x8] 
+  local 0xf920 LDL.LU R2, [R1+0x8] 
+  local 0xf930 LDL R0, [R1+0x24] 
+  local 0x10440 LDL.LU R2, [R1+0x8] 
+  local 0x10470 LDL R0, [R1+0x24] 
+  local 0x10480 LDL R4, [R1+0x48] 
+  local 0x10b50 LDL R0, [R1+0x3c] 
+  ARRIVE-window 0x23d0..0x53e0 {'LDL': 4, 'STL': 0, 'MUFU.EX2': 96, 'F2FP': 48, 'FMNMX': 98, 'FFMA': 98, 'FADD': 94, 'FMUL': 0, 'PRMT': 1, 'SHFL': 6, 'BAR': 1, 'WARPGROUP.DEPBAR': 1}
+  ARRIVE-window 0x53e0..0x54f0 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 0, 'BAR': 0, 'WARPGROUP.DEPBAR': 0}
+  ARRIVE-window 0x54f0..0x8710 {'LDL': 5, 'STL': 0, 'MUFU.EX2': 98, 'F2FP': 48, 'FMNMX': 100, 'FFMA': 100, 'FADD': 96, 'FMUL': 66, 'PRMT': 1, 'SHFL': 6, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  ARRIVE-window 0x8710..0x8820 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 0, 'SHFL': 0, 'BAR': 0, 'WARPGROUP.DEPBAR': 0}
+  ARRIVE-window 0x8820..0xaba0 {'LDL': 2, 'STL': 0, 'MUFU.EX2': 98, 'F2FP': 48, 'FMNMX': 100, 'FFMA': 100, 'FADD': 96, 'FMUL': 66, 'PRMT': 1, 'SHFL': 4, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+producer 0x10bc0..0x15ff0 ('USETMAXREG.DEALLOC.CTAPOOL', '0x18 ') {'LDL': 20, 'STL': 16, 'MUFU.EX2': 0, 'F2FP': 0, 'FMNMX': 0, 'FFMA': 0, 'FADD': 0, 'FMUL': 0, 'PRMT': 98, 'SHFL': 51, 'BAR': 10, 'WARPGROUP.DEPBAR': 0}
+  local 0x10c00 STL [R1+0x3c], R0 
+  local 0x116e0 STL [R1+0x2c], RZ 
+  local 0x11710 STL [R1], R0 
+  local 0x11910 STL [R1+0x10], R2 
+  local 0x119d0 STL [R1+0x18], R0 
+  local 0x11a80 STL [R1+0x28], R2 
+  local 0x11a90 STL [R1], R0 
+  local 0x11aa0 STL [R1+0x2c], RZ 
+  local 0x11ba0 STL [R1+0x24], R0 
+  local 0x11cc0 STL [R1+0x20], R3 
+  local 0x11d20 STL [R1+0x20], R3 
+  local 0x11e60 LDL R19, [R1+0x20] 
+  local 0x12230 STL.64 [R1+0x8], R18 
+  local 0x12240 STL [R1+0x4], R14 
+  local 0x12380 LDL R10, [R1] 
+  local 0x12640 LDL.LU R13, [R1+0x24] 
+  local 0x12660 LDL.LU R19, [R1+0x20] 
+  local 0x12670 LDL R17, [R1+0x28] 
+  local 0x12e40 LDL.LU R5, [R1+0x2c] 
+  local 0x12e90 STL [R1+0x2c], R5 
+  local 0x12f20 LDL.LU R13, [R1] 
+  local 0x12fb0 STL [R1], R10 
+  local 0x13040 LDL.64 R16, [R1+0x8] 
+  local 0x13060 LDL R11, [R1+0x4] 
+  local 0x135c0 LDL R5, [R1+0x18] 
+  local 0x135f0 LDL R12, [R1+0x10] 
+  local 0x13b30 LDL R13, [R1] 
+  local 0x13ca0 LDL R2, [R1] 
+  local 0x13e40 LDL R0, [R1] 
+  local 0x13e50 LDL R6, [R1+0x18] 
+  local 0x13ee0 LDL R3, [R1+0x10] 
+  local 0x13f10 LDL.LU R12, [R1] 
+  local 0x14520 STL [R1], R12 
+  local 0x14550 LDL R0, [R1+0x3c] 
+  local 0x150b0 LDL.LU R0, [R1+0x2c] 
+  local 0x151e0 LDL.LU R5, [R1] 
+  backedge 0xe00 -> 0xda0 
+  backedge 0xe80 -> 0xe50 
+  backedge 0x8510 -> 0x5200 
+  arithmetic-backedge-loop 0x5200..0x8510 {'LDL': 5, 'STL': 0, 'MUFU.EX2': 98, 'F2FP': 48, 'FMNMX': 100, 'FFMA': 100, 'FADD': 96, 'FMUL': 66, 'PRMT': 1, 'SHFL': 6, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  backedge 0xaae0 -> 0x8580 
+  arithmetic-backedge-loop 0x8580..0xaae0 {'LDL': 0, 'STL': 0, 'MUFU.EX2': 98, 'F2FP': 48, 'FMNMX': 100, 'FFMA': 100, 'FADD': 96, 'FMUL': 66, 'PRMT': 1, 'SHFL': 4, 'BAR': 2, 'WARPGROUP.DEPBAR': 2}
+  backedge 0x10b90 -> 0x1370 
+  arithmetic-backedge-loop 0x1370..0x10b90 {'LDL': 42, 'STL': 16, 'MUFU.EX2': 294, 'F2FP': 212, 'FMNMX': 442, 'FFMA': 304, 'FADD': 292, 'FMUL': 278, 'PRMT': 18, 'SHFL': 85, 'BAR': 9, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x11140 -> 0x10f40 
+  backedge 0x13c90 -> 0x12f50 
+  backedge 0x14a90 -> 0x14850 
+  backedge 0x15090 -> 0x11ab0 
+  backedge 0x15400 -> 0x153b0 
+  backedge 0x15480 -> 0x15440 
+  backedge 0x15490 -> 0x2330 
+  arithmetic-backedge-loop 0x2330..0x15490 {'LDL': 57, 'STL': 19, 'MUFU.EX2': 294, 'F2FP': 212, 'FMNMX': 442, 'FFMA': 304, 'FADD': 292, 'FMUL': 276, 'PRMT': 115, 'SHFL': 135, 'BAR': 19, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x15510 -> 0x154d0 
+  backedge 0x15520 -> 0x23a0 
+  arithmetic-backedge-loop 0x23a0..0x15520 {'LDL': 57, 'STL': 19, 'MUFU.EX2': 294, 'F2FP': 212, 'FMNMX': 442, 'FFMA': 304, 'FADD': 292, 'FMUL': 276, 'PRMT': 115, 'SHFL': 135, 'BAR': 19, 'WARPGROUP.DEPBAR': 6}
+  backedge 0x155a0 -> 0x15560 
+  backedge 0x155b0 -> 0x52f0 
+  arithmetic-backedge-loop 0x52f0..0x155b0 {'LDL': 52, 'STL': 19, 'MUFU.EX2': 198, 'F2FP': 164, 'FMNMX': 344, 'FFMA': 206, 'FADD': 198, 'FMUL': 276, 'PRMT': 114, 'SHFL': 129, 'BAR': 19, 'WARPGROUP.DEPBAR': 5}
+  backedge 0x15630 -> 0x155f0 
+  backedge 0x15640 -> 0x54e0 
+  arithmetic-backedge-loop 0x54e0..0x15640 {'LDL': 52, 'STL': 19, 'MUFU.EX2': 198, 'F2FP': 164, 'FMNMX': 344, 'FFMA': 206, 'FADD': 198, 'FMUL': 276, 'PRMT': 114, 'SHFL': 129, 'BAR': 18, 'WARPGROUP.DEPBAR': 5}
+  backedge 0x156c0 -> 0x15680 
+  backedge 0x156d0 -> 0x8660 
+  arithmetic-backedge-loop 0x8660..0x156d0 {'LDL': 47, 'STL': 19, 'MUFU.EX2': 100, 'F2FP': 116, 'FMNMX': 244, 'FFMA': 106, 'FADD': 102, 'FMUL': 210, 'PRMT': 113, 'SHFL': 123, 'BAR': 17, 'WARPGROUP.DEPBAR': 3}
+  backedge 0x15750 -> 0x15710 
+  backedge 0x15760 -> 0x8810 
+  arithmetic-backedge-loop 0x8810..0x15760 {'LDL': 47, 'STL': 19, 'MUFU.EX2': 100, 'F2FP': 116, 'FMNMX': 244, 'FFMA': 106, 'FADD': 102, 'FMUL': 210, 'PRMT': 113, 'SHFL': 123, 'BAR': 16, 'WARPGROUP.DEPBAR': 3}
+  backedge 0x157e0 -> 0x157a0 
+  backedge 0x157f0 -> 0xab70 
+  arithmetic-backedge-loop 0xab70..0x157f0 {'LDL': 47, 'STL': 19, 'MUFU.EX2': 2, 'F2FP': 68, 'FMNMX': 144, 'FFMA': 6, 'FADD': 6, 'FMUL': 144, 'PRMT': 112, 'SHFL': 119, 'BAR': 14, 'WARPGROUP.DEPBAR': 1}
+  backedge 0x15850 -> 0x15810 
+  backedge 0x15860 -> 0x12400 
+  backedge 0x158d0 -> 0x15890 
+  backedge 0x158e0 -> 0x12530 
+  backedge 0x15950 -> 0x15910 
+  backedge 0x15960 -> 0x12ef0 
+  backedge 0x159c0 -> 0x15980 
+  backedge 0x159d0 -> 0x131c0 
+  backedge 0x15a30 -> 0x159f0 
+  backedge 0x15a40 -> 0x133a0 
+  backedge 0x15ab0 -> 0x15a70 
+  backedge 0x15ac0 -> 0x13580 
+  backedge 0x15b30 -> 0x15af0 
+  backedge 0x15b40 -> 0x135c0 
+  backedge 0x15bb0 -> 0x15b70 
+  backedge 0x15bc0 -> 0x13e30 
+  backedge 0x15c30 -> 0x15bf0 
+  backedge 0x15c40 -> 0x13ed0 
+  backedge 0x15ca0 -> 0x15c60 
+  backedge 0x15cb0 -> 0x15160 
+  backedge 0x15d10 -> 0x15cd0 
+  backedge 0x15d20 -> 0x15290 
+  backedge 0x15d80 -> 0x15d40 
+  backedge 0x15d90 -> 0x152d0 
+  backedge 0x15e00 -> 0x15dc0 
+  backedge 0x15e10 -> 0x15320 
+  backedge 0x15e70 -> 0x15e30 
+  backedge 0x15e80 -> 0x15340 
+  backedge 0x15ee0 -> 0x15ea0 
+  backedge 0x15ef0 -> 0x15380 

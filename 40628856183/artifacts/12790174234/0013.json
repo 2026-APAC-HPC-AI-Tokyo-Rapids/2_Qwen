@@ -1,0 +1,88 @@
+{
+  "schema": "firmus-eagle-drafts/v1",
+  "calibration": true,
+  "commit": "a465a8fe4d0d770b6e49ac911d3eeb5c88f596e8",
+  "image": "/scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh",
+  "speculation": {
+    "algorithm": "EAGLE3",
+    "draft_quantization": "fp8",
+    "draft_tokens": 4,
+    "steps": 3,
+    "draft_repository": "nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507",
+    "draft_revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224"
+  },
+  "drafts": [
+    {
+      "name": "nebius",
+      "repository": "nebius/EAGLE3-Qwen3-235B-A22B-Instruct-2507",
+      "revision": "ff0f0c0999f6c86b21dfd2f5803eebc4ac712224",
+      "weight_sha256": "bf226a966868fe413a22e62e471aa1130bd94f17fd2c40d322b1c8b4def1ae86",
+      "weight_bytes": 1145943008,
+      "original_config_sha256": "1ec83be9e2876dcf7fd85f5a19528ddb49095b15cc7d83970e3d66b0746e4ab4",
+      "header_sha256": "dede9fdaebea5239feb528e707bf3a2f7955843fd1dfccdd60b3b78166d30c6e",
+      "draft_precision": "fp8",
+      "enabled": true
+    },
+    {
+      "name": "meituan",
+      "repository": "lmsys/SGLang-EAGLE3-Qwen3-235B-A22B-Instruct-2507-SpecForge-Meituan",
+      "revision": "7f8040f188bc80e309ddb2a25faf30550b356b72",
+      "weight_sha256": "d234d659e49f9ae97dbdadb3a8d5a42d01d2ead0cc48a318aadd185711193bba",
+      "weight_bytes": 1185333104,
+      "original_config_sha256": "ac2f3dcc008df4669b79ffc7bf522087777bd5d848dc46d89a5de46164948cf2",
+      "header_sha256": "79176249abb7ac42d1b89ef064473d611f041d35291b456f4f242ab3814f9a5b",
+      "draft_precision": "fp8",
+      "enabled": true
+    },
+    {
+      "name": "redhat",
+      "repository": "RedHatAI/Qwen3-235B-A22B-Instruct-2507-speculator.eagle3",
+      "revision": "87cd7aa934131942f5d7277617d7d6020f2df7f1",
+      "weight_sha256": "d591c7a357a66ad97225aec0e350ef79ccf10f97a41aefdf0f43d0228bcc984a",
+      "weight_bytes": 2390403048,
+      "original_config_sha256": "b3b2b110f782f2de2149a8fa98987c4ed96bbebad284ec51a997531755850985",
+      "header_sha256": "01e99bc579f1e61a27fe5157af7cb94152a1cd20210a3a890124d7d6c9f953d4",
+      "draft_precision": null,
+      "enabled": false,
+      "reason": "Excluded: Eagle3DraftModel/speculators config is not native in pinned SGLang. norm_before_residual=true uses normalized hidden states as the attention residual; LlamaForCausalLMEagle3 uses unnormalized hidden states. This input-dependent RMSNorm cannot be converted by tensor renaming or constant weight conversion. A faithful forward implementation is outside this diagnostic; no weights or computation changed."
+    }
+  ],
+  "model_revision": "e156cb4efae43fbee1a1ab073f946a1377e6b969",
+  "tokenizer_revision": "ac9c66cc9b46af7306746a9250f23d47083d689e",
+  "scope": "two stock TP4 servers in parallel; no PD, no MegaMoE, no CUDA graphs; FP8 target/draft/KV; acceptance diagnostic only",
+  "timing": {
+    "startup_limit_s": 600,
+    "client_duration_limit_s": 180,
+    "client_grace_s": 30,
+    "worker_cleanup_at_s": 900,
+    "parent_cleanup_at_s": 915,
+    "process_limit_s": 960,
+    "slurm_limit_s": 1020
+  },
+  "startup_reference": {
+    "run": 40621030371,
+    "target_load_s": [
+      19.38,
+      21.15
+    ],
+    "draft_load_s": [
+      0.95,
+      0.96
+    ],
+    "server_start_to_graph_begin_s": 60,
+    "target_graph_s": 99.7,
+    "draft_graph_s": 24.9,
+    "ready_s": 194,
+    "graph_free_subtraction_estimate_s": 69.4,
+    "prefill_graph_disabled_ready_s": 165,
+    "prefill_pd_warmup_s": 78,
+    "client_setup_s": 49.4,
+    "client_export_s": 16.1
+  },
+  "cluster": "firmus",
+  "benchmark": "kernels/probes/prepare-firmus-eagle-accept.sh",
+  "cuda": "13.0",
+  "cxx": "/usr/bin/g++",
+  "allocated_gpus": 8,
+  "probe_gpus": 8
+}

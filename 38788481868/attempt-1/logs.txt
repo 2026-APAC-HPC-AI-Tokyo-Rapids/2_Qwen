@@ -1,0 +1,328 @@
+
+===== 0_inspect.txt =====
+﻿2026-10-15T18:47:09.6689454Z Current runner version: '2.336.0'
+2026-10-15T18:47:09.6695909Z Runner name: 'home-lab-d760129b01b6'
+2026-10-15T18:47:09.6696752Z Runner group name: 'default'
+2026-10-15T18:47:09.6697908Z Machine name: 'd760129b01b6'
+2026-10-15T18:47:09.6702687Z ##[group]GITHUB_TOKEN Permissions
+2026-10-15T18:47:09.6705355Z Contents: read
+2026-10-15T18:47:09.6705984Z Metadata: read
+2026-10-15T18:47:09.6706582Z ##[endgroup]
+2026-10-15T18:47:09.6708846Z Secret source: Actions
+2026-10-15T18:47:09.6709768Z Cache mode: write
+2026-10-15T18:47:09.6710543Z Prepare workflow directory
+2026-10-15T18:47:09.7106676Z Prepare all required actions
+2026-10-15T18:47:09.7234621Z Complete job name: inspect
+2026-10-15T18:47:09.8075718Z ##[group]Run set -euo pipefail
+2026-10-15T18:47:09.8076642Z [36;1mset -euo pipefail[0m
+2026-10-15T18:47:09.8077958Z [36;1mroot=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/pd-38786485817-1.rANF8zYBSb[0m
+2026-10-15T18:47:09.8079888Z [36;1mif [[ ! -f "${root}/source/provenance.json" ]]; then echo 'Runtime already removed; consult the completed archive'; exit 0; fi[0m
+2026-10-15T18:47:09.8082170Z [36;1mjq -e '.cluster == "aspire2ap" and .commit == "e11bbaa7d33df13a00050dd3cb3c0cac4c57ad9e"' "${root}/source/provenance.json"[0m
+2026-10-15T18:47:09.8083668Z [36;1mdate -u +%FT%TZ[0m
+2026-10-15T18:47:09.8084638Z [36;1mtest "$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt")" = 220539.pbs111[0m
+2026-10-15T18:47:09.8085977Z [36;1mgrep -q NIXL_ERR_REMOTE_DISCONNECT "${root}/logs/prefill-0.log"[0m
+2026-10-15T18:47:09.8087522Z [36;1mstate=$(/opt/pbs/bin/qstat -x -f -F json 220539.pbs111 | jq -er '.Jobs["220539.pbs111"].job_state')[0m
+2026-10-15T18:47:09.8089907Z [36;1mif [[ "${state}" == R || "${state}" == Q ]]; then /opt/pbs/bin/qdel 220539.pbs111; printf 'authorized_qdel=220539.pbs111\n'; else printf 'already_terminal_or_exiting=%s\n' "${state}"; fi[0m
+2026-10-15T18:47:09.8095145Z [36;1mif [[ -s "${root}/logs/pbs-accounting.txt" ]]; then job_id=$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt"); [[ "${job_id}" =~ ^[0-9]+[.][A-Za-z0-9.-]+$ ]]; /opt/pbs/bin/qstat -x -f -F json "${job_id}" | jq '.Jobs | to_entries[] | {job_id: .key, state: .value.job_state, queue: .value.queue, started: .value.stime, hosts: .value.exec_host, used: (.value.resources_used | del(.gpu_usage)), comment: .value.comment, exit_status: .value.Exit_status}'; fi[0m
+2026-10-15T18:47:09.8101293Z [36;1mfor path in "${root}/logs/"*.log; do if [[ -s "${path}" ]]; then printf '\nlog=%s\n' "${path##*/}"; { grep -nE 'NIXL_ERR|UCX.*(ERROR|WARN)|failed to transfer|Failed to transfer|TimeoutError|Traceback|CUDA out of memory|Failed.*KV|KV.*failed' "${path}" || true; } | awk 'NR <= 30' | cut -c 1-1500; tail -n 12 "${path}" | cut -c 1-1500; fi; done[0m
+2026-10-15T18:47:09.8104669Z [36;1mif [[ -s "${root}/results/score.json" ]]; then cat "${root}/results/score.json"; fi[0m
+2026-10-15T18:47:09.8122441Z shell: /opt/actions-runner-shells/aspire2p-shell --github-shell {0}
+2026-10-15T18:47:09.8124390Z ##[endgroup]
+2026-10-15T18:47:14.3025708Z true
+2026-10-15T18:47:14.3028093Z 2026-10-15T18:47:14Z
+2026-10-15T18:47:15.3945710Z authorized_qdel=220539.pbs111
+2026-10-15T18:47:15.4363377Z {
+2026-10-15T18:47:15.4364421Z   "job_id": "220539.pbs111",
+2026-10-15T18:47:15.4365839Z   "state": "R",
+2026-10-15T18:47:15.4367421Z   "queue": "aiq2",
+2026-10-15T18:47:15.4368709Z   "started": "Fri Oct 16 02:37:30 2026",
+2026-10-15T18:47:15.4370342Z   "hosts": "a2ap-dgx004/0*112+a2ap-dgx030/0*112",
+2026-10-15T18:47:15.4371917Z   "used": {
+2026-10-15T18:47:15.4373198Z     "cpupercent": 1489,
+2026-10-15T18:47:15.4374507Z     "cput": "01:49:59",
+2026-10-15T18:47:15.4375702Z     "mem": "184224028kb",
+2026-10-15T18:47:15.4377298Z     "ncpus": 224,
+2026-10-15T18:47:15.4378614Z     "ngpus": 0,
+2026-10-15T18:47:15.4379819Z     "vmem": "4714308436kb",
+2026-10-15T18:47:15.4381223Z     "walltime": "00:08:36"
+2026-10-15T18:47:15.4382071Z   },
+2026-10-15T18:47:15.4384840Z   "comment": "Job run at Fri Oct 16 at 02:37 on (a2ap-dgx004:ncpus=112:ngpus=8:mem=1971322880kb)+(a2ap-dgx030:ncpus=112:ngpus=8:mem=1971322880kb) and terminated by ACCOUNT@a2ap-login02.asp2p.nscc.sg",
+2026-10-15T18:47:15.4390836Z   "exit_status": null
+2026-10-15T18:47:15.4391796Z }
+2026-10-15T18:47:15.4392175Z 
+2026-10-15T18:47:15.4392484Z log=aiperf.log
+2026-10-15T18:47:15.4589967Z 02:44:41.841 INFO     Creating interval generator: pattern=concurrency_burst, rate=None, smoothness=None (request_rate.py:114)
+2026-10-15T18:47:15.4593616Z 02:44:41.842 NOTICE   Phase warmup (warmup) started | phase_index=0 | target: 60.0s duration (runner.py:559)
+2026-10-15T18:47:15.4598304Z 02:44:41.842 INFO     Waiting for event 'warmup phase sending' with timeout of 59.999543797s (runner.py:1178)
+2026-10-15T18:47:15.4600834Z 02:44:41.843 INFO     Credit phase start: warmup (records_manager.py:943)
+2026-10-15T18:47:15.4602300Z 
+2026-10-15T18:47:15.4855995Z Warmup:   0% |[33m          [0m| [00:00<?]
+2026-10-15T18:47:15.4919350Z Warmup:   0% |[33m          [0m| [00:00<?]
+2026-10-15T18:47:15.4921095Z                                    
+2026-10-15T18:47:15.4922626Z 
+2026-10-15T18:47:15.4923989Z Warmup:   3% |[33m▎         [0m| [00:01<00:57]
+2026-10-15T18:47:15.4926300Z Warmup:   3% |[33m▎         [0m| [00:01<00:57]
+2026-10-15T18:47:15.4928781Z Warmup:   7% |[33m▋         [0m| [00:03<00:55]
+2026-10-15T18:47:15.4930890Z Warmup:   7% |[33m▋         [0m| [00:03<00:55]
+2026-10-15T18:47:15.4932956Z Warmup:  10% |[33m█         [0m| [00:05<00:53]
+2026-10-15T18:47:15.4935081Z Warmup:  10% |[33m█         [0m| [00:05<00:53]
+2026-10-15T18:47:15.4937450Z Warmup:  13% |[33m█▎        [0m| [00:07<00:51]
+2026-10-15T18:47:15.4939902Z Warmup:  13% |[33m█▎        [0m| [00:07<00:51]
+2026-10-15T18:47:15.4942085Z Warmup:  17% |[33m█▋        [0m| [00:09<00:49]
+2026-10-15T18:47:15.4944073Z Warmup:  17% |[33m█▋        [0m| [00:09<00:49]
+2026-10-15T18:47:15.4946154Z Warmup:  20% |[33m██        [0m| [00:11<00:47]
+2026-10-15T18:47:15.4948381Z Warmup:  20% |[33m██        [0m| [00:11<00:47]
+2026-10-15T18:47:15.4950670Z Warmup:  23% |[33m██▎       [0m| [00:13<00:45]
+2026-10-15T18:47:15.4952879Z Warmup:  23% |[33m██▎       [0m| [00:13<00:45]
+2026-10-15T18:47:15.4954985Z Warmup:  27% |[33m██▋       [0m| [00:15<00:43]
+2026-10-15T18:47:15.4956558Z Warmup:  27% |[33m██▋       [0m| [00:15<00:43]
+2026-10-15T18:47:15.4958331Z Warmup:  30% |[33m███       [0m| [00:17<00:41]
+2026-10-15T18:47:15.4959814Z Warmup:  30% |[33m███       [0m| [00:17<00:41]
+2026-10-15T18:47:15.4961315Z Warmup:  33% |[33m███▎      [0m| [00:19<00:39]
+2026-10-15T18:47:15.4962623Z Warmup:  33% |[33m███▎      [0m| [00:19<00:39]
+2026-10-15T18:47:15.4963906Z Warmup:  37% |[33m███▋      [0m| [00:21<00:37]
+2026-10-15T18:47:15.4965303Z Warmup:  37% |[33m███▋      [0m| [00:21<00:37]
+2026-10-15T18:47:15.4966579Z Warmup:  40% |[33m████      [0m| [00:23<00:35]
+2026-10-15T18:47:15.4968106Z Warmup:  40% |[33m████      [0m| [00:23<00:35]
+2026-10-15T18:47:15.4969395Z Warmup:  43% |[33m████▎     [0m| [00:25<00:33]
+2026-10-15T18:47:15.4970504Z Warmup:  43% |[3
+2026-10-15T18:47:15.4971077Z 
+2026-10-15T18:47:15.4971660Z Warmup:  53% |[33m█████▎    [0m| [00:31<00:27]
+2026-10-15T18:47:15.4972935Z Warmup:  53% |[33m█████▎    [0m| [00:31<00:27]
+2026-10-15T18:47:15.4974207Z Warmup:  57% |[33m█████▋    [0m| [00:33<00:25]
+2026-10-15T18:47:15.4975576Z Warmup:  57% |[33m█████▋    [0m| [00:33<00:25]
+2026-10-15T18:47:15.4977175Z Warmup:  60% |[33m██████    [0m| [00:35<00:23]
+2026-10-15T18:47:15.4978505Z Warmup:  60% |[33m██████    [0m| [00:35<00:23]
+2026-10-15T18:47:15.4979778Z Warmup:  63% |[33m██████▎   [0m| [00:37<00:21]
+2026-10-15T18:47:15.4981056Z Warmup:  63% |[33m██████▎   [0m| [00:37<00:21]
+2026-10-15T18:47:15.4982428Z Warmup:  67% |[33m██████▋   [0m| [00:39<00:19]
+2026-10-15T18:47:15.4983706Z Warmup:  67% |[33m██████▋   [0m| [00:39<00:19]
+2026-10-15T18:47:15.4984981Z Warmup:  70% |[33m███████   [0m| [00:41<00:17]
+2026-10-15T18:47:15.4986253Z Warmup:  70% |[33m███████   [0m| [00:41<00:17]
+2026-10-15T18:47:15.4987708Z Warmup:  73% |[33m███████▎  [0m| [00:43<00:15]
+2026-10-15T18:47:15.4989936Z Warmup:  73% |[33m███████▎  [0m| [00:43<00:15]
+2026-10-15T18:47:15.4991237Z Warmup:  77% |[33m███████▋  [0m| [00:45<00:13]
+2026-10-15T18:47:15.4992518Z Warmup:  77% |[33m███████▋  [0m| [00:45<00:13]
+2026-10-15T18:47:15.4993795Z Warmup:  80% |[33m████████  [0m| [00:47<00:11]
+2026-10-15T18:47:15.4995279Z Warmup:  80% |[33m████████  [0m| [00:47<00:11]
+2026-10-15T18:47:15.4996615Z Warmup:  83% |[33m████████▎ [0m| [00:49<00:09]
+2026-10-15T18:47:15.4998428Z Warmup:  83% |[33m████████▎ [0m| [00:49<00:09]
+2026-10-15T18:47:15.4999747Z Warmup:  87% |[33m████████▋ [0m| [00:51<00:07]
+2026-10-15T18:47:15.5001872Z Warmup:  87% |[33m████████▋ [0m| [00:51<00:07]
+2026-10-15T18:47:15.5003718Z Warmup:  90% |[33m█████████ [0m| [00:53<00:05]
+2026-10-15T18:47:15.5005200Z Warmup:  90% |[33m███�
+2026-10-15T18:47:15.5007724Z 02:45:41.843 NOTICE   Phase warmup (warmup) sending complete | sent=393, completed=329, in_flight=64 | sessions: sent=393, completed=329 | timeout_triggered=True (runner.py:997)
+2026-10-15T18:47:15.5011140Z 02:45:41.844 INFO     Waiting for event 'warmup phase credits returned' with timeout of infs (runner.py:1178)
+2026-10-15T18:47:15.5012538Z 
+2026-10-15T18:47:15.5013316Z Warmup Grace Period: 0/393 |[36m          [0m|   0% [00:00<?]
+2026-10-15T18:47:15.5014907Z Warmup Grace Period: 0/393 |[36m          [0m|   0% [00:00<?]
+2026-10-15T18:47:15.5016586Z Warmup Grace Period: 329/393 |[36m████████▎ [0m|  84% [00:00<00:00]
+2026-10-15T18:47:15.5018068Z                                                             
+2026-10-15T18:47:15.5020124Z 02:45:43.845 INFO     Phase warmup progress | returned=334/393 | sent=393 | in_flight=59 | errors=0 | elapsed=62.0s (runner.py:1212)
+2026-10-15T18:47:15.5021756Z 
+2026-10-15T18:47:15.5022617Z Warmup Grace Period: 334/393 |[36m████████▍ [0m|  85% [00:01<00:00]
+2026-10-15T18:47:15.5024191Z Warmup Grace Period: 334/393 |[36m████████▍ [0m|  85% [00:01<00:00]
+2026-10-15T18:47:15.5026316Z Warmup Grace Period: 334/393 |[36m████████▍ [0m|  85% [00:20<00:00]02:46:13.850 INFO     Phase warmup progress | returned=335/393 | sent=393 | in_flight=58 | errors=0 | elapsed=92.0s (runner.py:1212)
+2026-10-15T18:47:15.5028586Z 02:46:43.854 INFO     Phase warmup progress | returned=335/393 | sent=393 | in_flight=58 | errors=0 | elapsed=122.0s (runner.py:1212)
+2026-10-15T18:47:15.5030027Z 02:47:13.862 INFO     Phase warmup progress | returned=335/393 | sent=393 | in_flight=58 | errors=0 | elapsed=152.0s (runner.py:1212)
+2026-10-15T18:47:15.5030847Z 
+2026-10-15T18:47:15.5031014Z log=decode-0.log
+2026-10-15T18:47:15.6826506Z /opt/sglang/source/python/sglang/srt/entrypoints/openai/serving_chat.py:1192: FastAPIDeprecationWarning: ORJSONResponse is deprecated, FastAPI now serializes data directly to JSON bytes via Pydantic when a return type or response model is set, which is faster and doesn't need a custom response class. Read more in the FastAPI docs: https://fastapi.tiangolo.com/advanced/custom-response/#orjson-or-response-model and https://fastapi.tiangolo.com/tutorial/response-model/
+2026-10-15T18:47:15.6829992Z   return self.create_error_response(str(e))
+2026-10-15T18:47:15.6831563Z [2026-10-16 02:47:14 DP1 TP1 EP1] Decode transfer failed for request rank=1 decode_req.req.rid='26fec6ad1d3f4f9ea0e4cb555581137d' decode_req.req.bootstrap_room=4598294508794350882 with exception KVTransferError(bootstrap_room=4598294508794350882): Aborted by AbortReq.
+2026-10-15T18:47:15.6833487Z [2026-10-16 02:47:14] Received output for rid='26fec6ad1d3f4f9ea0e4cb555581137d' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6835538Z [2026-10-16 02:47:14 DP0 TP0 EP0] Decode transfer failed for request rank=0 decode_req.req.rid='4db86ad08b254281af0afb322e3abeab' decode_req.req.bootstrap_room=4814063810003199535 with exception KVTransferError(bootstrap_room=4814063810003199535): Aborted by AbortReq.
+2026-10-15T18:47:15.6837546Z [2026-10-16 02:47:14] Received output for rid='4db86ad08b254281af0afb322e3abeab' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6839023Z [2026-10-16 02:47:14 DP0 TP0 EP0] Attempting to reconnect to 192.0.2.7:9001...
+2026-10-15T18:47:15.6839784Z [2026-10-16 02:47:14 DP0 TP0 EP0] Attempting to reconnect to 192.0.2.7:9000...
+2026-10-15T18:47:15.6841486Z [2026-10-16 02:47:15 DP0 TP0 EP0] Decode transfer failed for request rank=0 decode_req.req.rid='d6d511c06a904a23bcbb9adc570c6a5a' decode_req.req.bootstrap_room=8806883936835923688 with exception KVTransferError(bootstrap_room=8806883936835923688): Aborted by AbortReq.
+2026-10-15T18:47:15.6843585Z [2026-10-16 02:47:15] Received output for rid='d6d511c06a904a23bcbb9adc570c6a5a' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6845542Z [2026-10-16 02:47:15 DP3 TP3 EP3] Decode transfer failed for request rank=3 decode_req.req.rid='9e9b8518e39e4dae8614f89142c4ce51' decode_req.req.bootstrap_room=7562424691025748740 with exception KVTransferError(bootstrap_room=7562424691025748740): Aborted by AbortReq.
+2026-10-15T18:47:15.6847614Z [2026-10-16 02:47:15] Received output for rid='9e9b8518e39e4dae8614f89142c4ce51' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6848310Z 
+2026-10-15T18:47:15.6848470Z log=decode-1.log
+2026-10-15T18:47:15.6849941Z [2026-10-16 02:47:14 DP0 TP0 EP0] Decode transfer failed for request rank=0 decode_req.req.rid='65a5d608ab97483c9fed7fcc488d8db1' decode_req.req.bootstrap_room=18498024620522266 with exception KVTransferError(bootstrap_room=18498024620522266): Aborted by AbortReq.
+2026-10-15T18:47:15.6851951Z [2026-10-16 02:47:14] Received output for rid='65a5d608ab97483c9fed7fcc488d8db1' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6852931Z [2026-10-16 02:47:14 DP1 TP1 EP1] Attempting to reconnect to 192.0.2.7:9000...
+2026-10-15T18:47:15.6853656Z [2026-10-16 02:47:14 DP1 TP1 EP1] Attempting to reconnect to 192.0.2.7:9001...
+2026-10-15T18:47:15.6854380Z [2026-10-16 02:47:14 DP2 TP2 EP2] Attempting to reconnect to 192.0.2.7:9001...
+2026-10-15T18:47:15.6855203Z [2026-10-16 02:47:14 DP2 TP2 EP2] Attempting to reconnect to 192.0.2.7:9000...
+2026-10-15T18:47:15.6855943Z [2026-10-16 02:47:14 DP3 TP3 EP3] Attempting to reconnect to 192.0.2.7:9000...
+2026-10-15T18:47:15.6856672Z [2026-10-16 02:47:14 DP0 TP0 EP0] Attempting to reconnect to 192.0.2.7:9001...
+2026-10-15T18:47:15.6857456Z [2026-10-16 02:47:14 DP3 TP3 EP3] Attempting to reconnect to 192.0.2.7:9001...
+2026-10-15T18:47:15.6858178Z [2026-10-16 02:47:14 DP0 TP0 EP0] Attempting to reconnect to 192.0.2.7:9000...
+2026-10-15T18:47:15.6859886Z [2026-10-16 02:47:15 DP1 TP1 EP1] Decode transfer failed for request rank=1 decode_req.req.rid='8238e6b804d047409adbe4dc7eaec9fb' decode_req.req.bootstrap_room=1202700341688779873 with exception KVTransferError(bootstrap_room=1202700341688779873): Aborted by AbortReq.
+2026-10-15T18:47:15.6861837Z [2026-10-16 02:47:15] Received output for rid='8238e6b804d047409adbe4dc7eaec9fb' but the state was deleted in TokenizerManager.
+2026-10-15T18:47:15.6862541Z 
+2026-10-15T18:47:15.6862675Z log=driver.log
+2026-10-15T18:47:15.6863191Z pd_driver_started=2026-10-15T18:37:31Z host=a2ap-dgx004
+2026-10-15T18:47:15.6863573Z 
+2026-10-15T18:47:15.6863745Z log=node-0-environment.log
+2026-10-15T18:47:15.6889663Z hostname=a2ap-dgx004
+2026-10-15T18:47:15.6890355Z node_ip=192.0.2.7
+2026-10-15T18:47:15.6890799Z node_rank=0
+2026-10-15T18:47:15.6891483Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:47:15.6892418Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-483856bd-a57a-9145-7766-446ecf74ea51)
+2026-10-15T18:47:15.6893173Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-fb9e0401-be7e-de19-37ea-2cf68b113d09)
+2026-10-15T18:47:15.6893949Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-6e2e3517-05a2-f29a-0fbf-671c2c770349)
+2026-10-15T18:47:15.6894701Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-db9f2e12-ea10-d0b5-2ec1-d7957835124c)
+2026-10-15T18:47:15.6895441Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-6c60c08c-6607-14d7-5a88-d6626ba0fe16)
+2026-10-15T18:47:15.6896492Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-d498f7bc-ca57-8469-c1ed-dfb0827d0de6)
+2026-10-15T18:47:15.6897310Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c7f72f5e-d4e0-4290-8619-af2d47bc62eb)
+2026-10-15T18:47:15.6898054Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-8669eaa6-45c0-5f64-b43c-3fca1f0ba907)
+2026-10-15T18:47:15.6898495Z 
+2026-10-15T18:47:15.6898653Z log=node-0-model-copy.log
+2026-10-15T18:47:15.7010057Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:47:15.7012757Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:47:15.7014298Z host=a2ap-dgx004
+2026-10-15T18:47:15.7017611Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:47:15.7022553Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147069632 2193450357620      14% /scratch
+2026-10-15T18:47:15.7027538Z /dev/md1                                                                                                                                                                         ext4     29884363448    456428168   27927677796       2% /raid
+2026-10-15T18:47:15.7029936Z copy_start=2026-10-16T02:37:32,086690112+08:00
+2026-10-15T18:47:15.7031042Z copy_seconds=167
+2026-10-15T18:47:15.7031961Z copy_end=2026-10-16T02:40:19,528949298+08:00
+2026-10-15T18:47:15.7033632Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:47:15.7035186Z copy_verified=true
+2026-10-15T18:47:15.7035683Z 
+2026-10-15T18:47:15.7036105Z log=node-1-environment.log
+2026-10-15T18:47:15.7111513Z hostname=a2ap-dgx030
+2026-10-15T18:47:15.7112221Z node_ip=192.0.2.4
+2026-10-15T18:47:15.7112802Z node_rank=1
+2026-10-15T18:47:15.7114118Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:47:15.7115812Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-3262688e-3b06-2f57-aa25-4449f88d6ac9)
+2026-10-15T18:47:15.7117312Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-3712af80-a0de-2012-91ad-ec184cc15a0a)
+2026-10-15T18:47:15.7118673Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-52de63d1-3209-fe76-765f-dc3fa253bcc4)
+2026-10-15T18:47:15.7119918Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-43310372-cbe5-78ce-b3ce-2f3ddbba2696)
+2026-10-15T18:47:15.7121285Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-15d861f3-7719-4481-2f83-8589f314deea)
+2026-10-15T18:47:15.7122593Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-63ad4bd1-5318-43e9-29b5-d993683e79da)
+2026-10-15T18:47:15.7123954Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c69a0c8a-18ed-1732-ebd3-034234f21462)
+2026-10-15T18:47:15.7125278Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-f67cf417-8ebb-4bf0-562e-cef892bd436b)
+2026-10-15T18:47:15.7126154Z 
+2026-10-15T18:47:15.7126443Z log=node-1-model-copy.log
+2026-10-15T18:47:15.7281923Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:47:15.7283523Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:47:15.7284612Z host=a2ap-dgx030
+2026-10-15T18:47:15.7286106Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:47:15.7289514Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147600064 2193449826980      14% /scratch
+2026-10-15T18:47:15.7292680Z /dev/md1                                                                                                                                                                         ext4     29884363448    180277924   28203828040       1% /raid
+2026-10-15T18:47:15.7294775Z copy_start=2026-10-16T02:37:32,157549429+08:00
+2026-10-15T18:47:15.7295315Z copy_seconds=168
+2026-10-15T18:47:15.7295746Z copy_end=2026-10-16T02:40:20,173644709+08:00
+2026-10-15T18:47:15.7296510Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:47:15.7297604Z copy_verified=true
+2026-10-15T18:47:15.7297960Z 
+2026-10-15T18:47:15.7298179Z log=prefill-0.log
+2026-10-15T18:47:15.7629678Z 566:[2026-10-16 02:44:57 DP1 TP1 EP1] NIXL transport error for room 8941732541143921333: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7641497Z 569:[2026-10-16 02:44:57 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='c80b72c6dd9648c18dd9731eeff4cce5' req.bootstrap_room=8941732541143921333 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7644643Z 573:[2026-10-16 02:44:58 DP0 TP0 EP0] NIXL transport error for room 7156552836026147485: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7652083Z 574:[2026-10-16 02:44:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='9ae9c419952f4bbb9fdb6d7ee35a90ec' req.bootstrap_room=7156552836026147485 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7659610Z 581:[2026-10-16 02:44:58 DP3 TP3 EP3] NIXL transport error for room 5915362937506491471: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7664650Z 583:[2026-10-16 02:44:58 DP3 TP3 EP3] NIXL transport error for room 6203979513743315766: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7672189Z 584:[2026-10-16 02:44:58 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='539eb38f8bdb404f9ec0d37e644fdfc3' req.bootstrap_room=5915362937506491471 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7684062Z 585:[2026-10-16 02:44:58 DP3 TP3 EP3] Prefill transfer failed for request rank=3 req.rid='5f36e11b9bb34307b3d7551e9e78cc59' req.bootstrap_room=6203979513743315766 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7690763Z 588:[2026-10-16 02:44:59 DP0 TP0 EP0] NIXL transport error for room 7499526666851159073: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7696592Z 591:[2026-10-16 02:44:59 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='187a37662c5b4cd09fe8d9ef950d1a57' req.bootstrap_room=7499526666851159073 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7702638Z 600:[2026-10-16 02:44:59 DP2 TP2 EP2] NIXL transport error for room 6498508212188130259: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7708824Z 601:[2026-10-16 02:44:59 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='f6fa261ed37b4a21ae96b351a5532904' req.bootstrap_room=6498508212188130259 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7714575Z 679:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 5868457581196680979: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7718614Z 681:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 8983178787843038099: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7722785Z 683:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 2380950026079868214: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7726740Z 685:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 5851331343051495944: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7730702Z 687:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 6192632561826306545: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7733831Z 689:[2026-10-16 02:45:12 DP1 TP1 EP1] NIXL transport error for room 18498024620522266: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7739908Z 690:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='81108252deda4d0f893f1cd65df77cd8' req.bootstrap_room=5868457581196680979 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7747504Z 691:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='a71e3dbfc0d94eb5aee5e2d82c24fb38' req.bootstrap_room=8983178787843038099 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7755827Z 692:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='2556b188e34a436196638f9fa39d68a9' req.bootstrap_room=2380950026079868214 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7763195Z 693:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='778f7ec4abef4e1991ebe021302de5bf' req.bootstrap_room=5851331343051495944 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7771777Z 694:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='20139809e05a4852a2b7fabf49c051c7' req.bootstrap_room=6192632561826306545 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7779069Z 695:[2026-10-16 02:45:12 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='4a8f10406739400183442ef474782334' req.bootstrap_room=18498024620522266 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7782669Z 708:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 7796668682527855537: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7785048Z 710:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 6864099925280618569: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7786920Z 712:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 6260120724736295790: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7789027Z 714:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 3000066481417666031: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7791078Z 716:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 8412961942198895390: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7793985Z 717:[2026-10-16 02:45:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='55914974580947a6a8236591457aac30' req.bootstrap_room=7796668682527855537 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7797301Z E1016 02:45:58.151418 2551940 nixl_agent.cpp:1198] postXferReq: remote agent '19a00c78-c05d-44a2-8b06-8081a182a55b' was disconnected after transfer request creation
+2026-10-15T18:47:15.7801364Z [2026-10-16 02:45:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='5cb2f3c3108f43bc9a6d107580e6b930' req.bootstrap_room=4144059948512513298 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7803754Z [2026-10-16 02:45:58 DP0 TP0 EP0] NIXL transport error for room 7438858320574919475: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7806020Z [2026-10-16 02:45:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='c14e97b6477d477bb8595d9720234dd5' req.bootstrap_room=4843476957436822415 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7808927Z [2026-10-16 02:45:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='1a6c37e10c854437a1f4b6df9e09579e' req.bootstrap_room=7438858320574919475 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.7811015Z [2026-10-16 02:45:58] INFO:     192.0.2.7:58306 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-15T18:47:15.7812279Z [2026-10-16 02:45:58] INFO:     192.0.2.7:58128 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-15T18:47:15.7813502Z [2026-10-16 02:45:58] INFO:     192.0.2.7:58260 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-15T18:47:15.7816112Z [2026-10-16 02:46:02 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3.27
+2026-10-15T18:47:15.7818622Z [2026-10-16 02:46:03] INFO:     192.0.2.7:55810 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:47:15.7821146Z [2026-10-16 02:47:02 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+2026-10-15T18:47:15.7823985Z [2026-10-16 02:47:03] INFO:     192.0.2.7:54898 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:47:15.7824423Z 
+2026-10-15T18:47:15.7824566Z log=prefill-1.log
+2026-10-15T18:47:15.9467992Z 594:[2026-10-16 02:44:57 DP2 TP2 EP2] NIXL transport error for room 8614832674743401742: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9472902Z 595:[2026-10-16 02:44:57 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='98688fa7f2e84f24a0f5d99b9fec8f7d' req.bootstrap_room=8614832674743401742 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9480195Z 604:[2026-10-16 02:44:58 DP0 TP0 EP0] NIXL transport error for room 7356386921805802849: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9483813Z 605:[2026-10-16 02:44:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='d1171675ab3b4f85920094d3969ff09e' req.bootstrap_room=7356386921805802849 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9488338Z 609:[2026-10-16 02:44:58 DP1 TP1 EP1] NIXL transport error for room 2705737592816121392: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9493550Z 613:[2026-10-16 02:44:58 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='2d552b4bf9c64e078085877a28830f50' req.bootstrap_room=2705737592816121392 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9501043Z 618:[2026-10-16 02:44:59 DP0 TP0 EP0] NIXL transport error for room 3959913487803694791: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9504678Z 620:[2026-10-16 02:44:59 DP0 TP0 EP0] NIXL transport error for room 6501247598114389618: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9508349Z 622:[2026-10-16 02:44:59 DP0 TP0 EP0] NIXL transport error for room 5393569487324360437: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9513426Z 625:[2026-10-16 02:44:59 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='df51db8b64744bc6b2f2e7b7fa7544ad' req.bootstrap_room=3959913487803694791 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9520311Z 626:[2026-10-16 02:44:59 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='bdf772959d75458db816e2e1a4ce6af3' req.bootstrap_room=6501247598114389618 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9528542Z 627:[2026-10-16 02:44:59 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='3360b80c57b743c29b2785fd040aaf46' req.bootstrap_room=5393569487324360437 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9533643Z 640:[2026-10-16 02:44:59 DP0 TP0 EP0] NIXL transport error for room 24644202089661182: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9539013Z 642:[2026-10-16 02:45:00 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='cdfd5df4f7334de6a32c12ac7f06565d' req.bootstrap_room=24644202089661182 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9544012Z 742:[2026-10-16 02:45:12 DP2 TP2 EP2] NIXL transport error for room 4333440520251867822: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9547733Z 744:[2026-10-16 02:45:12 DP2 TP2 EP2] NIXL transport error for room 6536124564302895837: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9551372Z 746:[2026-10-16 02:45:12 DP2 TP2 EP2] NIXL transport error for room 6198717665001931465: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9554740Z 748:[2026-10-16 02:45:12 DP2 TP2 EP2] NIXL transport error for room 4814063810003199535: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9560858Z 749:[2026-10-16 02:45:12 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='c372d81fa6dd4db8bcf1ec8725412e54' req.bootstrap_room=4333440520251867822 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9567627Z 750:[2026-10-16 02:45:12 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='63e7ed9b6a29456684e0145dba2d4eea' req.bootstrap_room=6536124564302895837 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9574683Z 753:[2026-10-16 02:45:12 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='a8229bdd96d34d1cbb0586513f929031' req.bootstrap_room=6198717665001931465 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9583383Z 754:[2026-10-16 02:45:12 DP2 TP2 EP2] Prefill transfer failed for request rank=2 req.rid='a981bb15148d483f91147933bbaf6b6e' req.bootstrap_room=4814063810003199535 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9588591Z 762:[2026-10-16 02:45:13 DP0 TP0 EP0] NIXL transport error for room 4028646821837821113: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9593617Z 763:[2026-10-16 02:45:13 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='b3d2bc2efa9c44fb8dea918486e051ed' req.bootstrap_room=4028646821837821113 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9601831Z 797:[2026-10-16 02:45:22 DP1 TP1 EP1] NIXL transport error for room 8806883936835923688: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9605307Z 799:[2026-10-16 02:45:22 DP1 TP1 EP1] NIXL transport error for room 616596689455312394: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9610917Z 800:[2026-10-16 02:45:22 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='a82a4a98c642487aabeff1eca5fddb8a' req.bootstrap_room=8806883936835923688 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9617749Z 801:[2026-10-16 02:45:22 DP1 TP1 EP1] Prefill transfer failed for request rank=1 req.rid='fcda3ddea68345978571c75159962703' req.bootstrap_room=616596689455312394 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9623227Z 839:[2026-10-16 02:45:28 DP0 TP0 EP0] NIXL transport error for room 8874824948189926319: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9628554Z 841:[2026-10-16 02:45:28 DP0 TP0 EP0] NIXL transport error for room 8336378643222557935: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9633224Z E1016 02:45:58.201379 2551980 nixl_agent.cpp:1198] postXferReq: remote agent '19a00c78-c05d-44a2-8b06-8081a182a55b' was disconnected after transfer request creation
+2026-10-15T18:47:15.9638189Z [2026-10-16 02:45:58 DP0 TP0 EP0] NIXL transport error for room 9083933610876705828: NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9643972Z [2026-10-16 02:45:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='24929c07555d45abbfd6f702fe673a5d' req.bootstrap_room=4088173437591465746 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9650644Z [2026-10-16 02:45:58 DP0 TP0 EP0] Prefill transfer failed for request rank=0 req.rid='e98255c9c8304aa7805e96755adbbd12' req.bootstrap_room=9083933610876705828 with exception NIXL_ERR_REMOTE_DISCONNECT
+2026-10-15T18:47:15.9655864Z [2026-10-16 02:45:58] INFO:     192.0.2.7:60548 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-15T18:47:15.9658585Z [2026-10-16 02:45:58] INFO:     192.0.2.7:60560 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-10-15T18:47:15.9666127Z [2026-10-16 02:46:02 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 3.27
+2026-10-15T18:47:15.9671786Z [2026-10-16 02:46:03] INFO:     192.0.2.7:36470 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:47:15.9677509Z [2026-10-16 02:47:02 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 1.07
+2026-10-15T18:47:15.9682964Z [2026-10-16 02:47:03] INFO:     192.0.2.7:40578 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:47:15.9685814Z [2026-10-16 02:47:14] SIGTERM received. signum=None frame=None. Draining requests and shutting down...
+2026-10-15T18:47:15.9689239Z [2026-10-16 02:47:14] SIGTERM received. signum=None frame=None. Draining requests and shutting down...
+2026-10-15T18:47:15.9691139Z 
+2026-10-15T18:47:15.9691545Z log=router.log
+2026-10-15T18:47:15.9739069Z [2m2026-10-15 18:45:39[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"25a9c416-21a7-4d36-b729-11982b3d90fe" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m538600[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9755207Z [2m2026-10-15 18:45:39[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"78efe9b8-82fc-4152-a010-a6f97008f1aa" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m352022[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9790737Z [2m2026-10-15 18:45:40[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"51d5c122-32b7-44e6-9ccf-6742e1e3d096"[1m}[0m[2m:[0m [2msmg::request[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m310:[0m started processing request
+2026-10-15T18:47:15.9802647Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"d46998db-f43f-40fb-9813-8d582c9d3d76"[1m}[0m[2m:[0m [2msmg::request[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m310:[0m started processing request
+2026-10-15T18:47:15.9809392Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"51d5c122-32b7-44e6-9ccf-6742e1e3d096" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m366841[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9815154Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"f0b396f4-148b-4c24-b05c-2895318d56d7"[1m}[0m[2m:[0m [2msmg::request[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m310:[0m started processing request
+2026-10-15T18:47:15.9820394Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"6b394d19-eb6b-447e-bc05-2647a25af5a7"[1m}[0m[2m:[0m [2msmg::request[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m310:[0m started processing request
+2026-10-15T18:47:15.9827319Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"d46998db-f43f-40fb-9813-8d582c9d3d76" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m392648[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9835391Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"f0b396f4-148b-4c24-b05c-2895318d56d7" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m347869[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9841422Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"78b03aeb-77b0-4d30-99ed-f0842ea7eb1f"[1m}[0m[2m:[0m [2msmg::request[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m310:[0m started processing request
+2026-10-15T18:47:15.9848249Z [2m2026-10-15 18:45:41[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"6b394d19-eb6b-447e-bc05-2647a25af5a7" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m413613[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9854557Z [2m2026-10-15 18:45:42[0m [32m INFO[0m [1mhttp_request[0m[1m{[0m[3mmethod[0m[2m=[0mPOST [3muri[0m[2m=[0m/v1/chat/completions [3mversion[0m[2m=[0mHTTP/1.1 [3mmodule[0m[2m=[0m"smg" [3mrequest_id[0m[2m=[0m"78b03aeb-77b0-4d30-99ed-f0842ea7eb1f" [3mstatus_code[0m[2m=[0m200 [3mlatency[0m[2m=[0m387070[1m}[0m[2m:[0m [2msmg::response[0m[2m:[0m [2msrc/middleware.rs[0m[2m:[0m[2m359:[0m finished processing request
+2026-10-15T18:47:15.9857457Z 
+2026-10-15T18:47:15.9857629Z log=server-step.log
+2026-10-15T18:47:15.9858079Z pbsdsh: killing task 0x00000002 signal 15
+2026-10-15T18:47:15.9858658Z pbsdsh: killing task 0x40000001 signal 15
+2026-10-15T18:47:18.1255693Z Cleaning up orphan processes
+
+===== inspect/system.txt =====
+2026-10-15T18:47:05.9320000Z Evaluating inspect.if
+2026-10-15T18:47:05.9320000Z Evaluating: success()
+2026-10-15T18:47:05.9320000Z Result: true
+2026-10-15T18:47:06.0530000Z Requested labels: self-hosted, home-lab
+2026-10-15T18:47:06.0530000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire-run-status.yml@refs/heads/perf/aspire-megamoe-port
+2026-10-15T18:47:06.0530000Z Waiting for a runner to pick up this job...
+2026-10-15T18:47:06.4320000Z Job is about to start running on the runner: home-lab-d760129b01b6

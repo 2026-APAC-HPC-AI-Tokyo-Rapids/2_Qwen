@@ -1,0 +1,75 @@
+--- a/hopper/softmax.h
++++ b/hopper/softmax.h
+@@ -89,7 +89,7 @@
+ 
+ ////////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+-template <int kNRows, int Max_offset=0>
++template <int kNRows, int Max_offset=0, bool TreeMax=false>
+ struct Softmax {
+ 
+     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+@@ -100,6 +100,27 @@
+     TensorT row_sink;
+ 
+     CUTLASS_DEVICE Softmax(float const softmax_scale_log2_) : softmax_scale_log2(softmax_scale_log2_) {};
++
++    // Four independent maxima shorten the intra-thread dependency chain.
++    // Keep the existing quad reduction and all sum/exponential arithmetic intact.
++    template<bool First, class Scores>
++    __forceinline__ __device__ void prefill_reduce_max(Scores const& scores) {
++        if constexpr (!TreeMax) {
++            flash::template reduce_max<First>(scores, row_max);
++        } else {
++            static_assert(CUTE_STATIC_V(size<1>(scores)) >= 4);
++            MaxOp<float> op;
++            #pragma unroll
++            for (int mi = 0; mi < kNRows; ++mi) {
++                float m[4] = {scores(mi, 0), scores(mi, 1), scores(mi, 2), scores(mi, 3)};
++                #pragma unroll
++                for (int ni = 4; ni < size<1>(scores); ++ni) { m[ni % 4] = op(m[ni % 4], scores(mi, ni)); }
++                float value = op(op(m[0], m[1]), op(m[2], m[3]));
++                row_max(mi) = First ? value : op(row_max(mi), value);
++            }
++            quad_allreduce_(row_max, row_max, op);
++        }
++    }
+ 
+     template<bool Is_first, bool Check_inf=false, typename Tensor0>
+     __forceinline__ __device__ TensorT max_get_scale(Tensor0 &acc_s) {
+@@ -108,12 +129,12 @@
+         static_assert(CUTE_STATIC_V(size<0>(scores)) == kNRows);
+         TensorT scores_scale;
+         if constexpr (Is_first) {
+-            flash::template reduce_max</*zero_init=*/true>(scores, row_max);
++            prefill_reduce_max<true>(scores);
+             cute::fill(scores_scale, 1.f);
+         } else {
+             Tensor scores_max_prev = make_fragment_like(row_max);
+             cute::copy(row_max, scores_max_prev);
+-            flash::template reduce_max</*zero_init=*/false>(scores, row_max);
++            prefill_reduce_max<false>(scores);
+             #pragma unroll
+             for (int mi = 0; mi < size(row_max); ++mi) {
+                 float scores_max_cur = !Check_inf
+--- a/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
++++ b/hopper/mainloop_fwd_sm90_tma_gmma_ws.hpp
+@@ -55,6 +55,7 @@
+     static constexpr bool PackGQA_TMA = PackGQA && kBlockH_ > 1;
+     static constexpr bool Split = Split_;
+     static constexpr bool V_colmajor = V_colmajor_;
++    static constexpr bool PrefillTreeMax = (PrefillVariant & 8) != 0;
+     static constexpr bool PrefillRegs = (PrefillVariant & 1) != 0;
+     static constexpr bool PrefillLazy = (PrefillVariant & 2) != 0;
+     static constexpr bool VByteImage = (PrefillVariant & 4) != 0;
+--- a/hopper/flash_fwd_kernel_sm90.h
++++ b/hopper/flash_fwd_kernel_sm90.h
+@@ -457,7 +457,7 @@
+                     softmax_scale_log2 *= q_descale * k_descale;
+                 }
+                 
+-                flash::Softmax<!LargeHeadDimV ? 2 * (2 * kBlockM / NumMmaThreads) : 2, /*Max_offset=*/!Is_FP8 ? 0 : 8> softmax(softmax_scale_log2);
++                flash::Softmax<!LargeHeadDimV ? 2 * (2 * kBlockM / NumMmaThreads) : 2, /*Max_offset=*/!Is_FP8 ? 0 : 8, CollectiveMainloop::PrefillTreeMax> softmax(softmax_scale_log2);
+ 
+                 if (has_sink) {
+                     int const split_idx = get<3>(block_coord);

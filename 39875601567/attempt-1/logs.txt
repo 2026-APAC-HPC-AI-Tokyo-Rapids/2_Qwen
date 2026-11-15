@@ -1,0 +1,785 @@
+
+===== 7_制御処理を検証 _ gigatoken CPU互換性.txt =====
+﻿2026-10-23T00:02:12.5661480Z Current runner version: '2.338.0'
+2026-10-23T00:02:12.5742678Z ##[group]Runner Image Provisioner
+2026-10-23T00:02:12.5744090Z Hosted Compute Agent
+2026-10-23T00:02:12.5745184Z Version: 20261012.601
+2026-10-23T00:02:12.5746324Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-23T00:02:12.5747602Z Build Date: 2026-10-12T17:48:21Z
+2026-10-23T00:02:12.5748984Z Worker ID: {a3370a2a-9731-425e-8f6a-f6cce429eda5}
+2026-10-23T00:02:12.5750256Z Region: eastus
+2026-10-23T00:02:12.5751252Z Cloud: Azure
+2026-10-23T00:02:12.5752209Z ##[endgroup]
+2026-10-23T00:02:12.5775212Z ##[group]Operating System
+2026-10-23T00:02:12.5776348Z Ubuntu
+2026-10-23T00:02:12.5777483Z 26.04.1
+2026-10-23T00:02:12.5778422Z LTS
+2026-10-23T00:02:12.5779398Z ##[endgroup]
+2026-10-23T00:02:12.5780415Z ##[group]Runner Image
+2026-10-23T00:02:12.5781590Z Image: ubuntu-26.04
+2026-10-23T00:02:12.5783025Z Version: 20261012.163.1
+2026-10-23T00:02:12.5785196Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261012.163/images/ubuntu/Ubuntu2604-Readme.md
+2026-10-23T00:02:12.5788087Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261012.163
+2026-10-23T00:02:12.5789837Z ##[endgroup]
+2026-10-23T00:02:12.5792036Z ##[group]GITHUB_TOKEN Permissions
+2026-10-23T00:02:12.5815630Z Contents: read
+2026-10-23T00:02:12.5816724Z Metadata: read
+2026-10-23T00:02:12.5817720Z ##[endgroup]
+2026-10-23T00:02:12.5820894Z Secret source: Actions
+2026-10-23T00:02:12.5822678Z Cache mode: write
+2026-10-23T00:02:12.5824264Z Prepare workflow directory
+2026-10-23T00:02:12.6414157Z Prepare all required actions
+2026-10-23T00:02:12.6488339Z Getting action download info
+2026-10-23T00:02:12.8284683Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-23T00:02:12.9457810Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-10-23T00:02:13.2313597Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:13.2319005Z Complete job name: 制御処理を検証 / gigatoken CPU互換性
+2026-10-23T00:02:13.3079304Z ##[group]Run actions/checkout@v7
+2026-10-23T00:02:13.3080217Z with:
+2026-10-23T00:02:13.3080737Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.3084748Z   token: ***
+2026-10-23T00:02:13.3085196Z   ssh-strict: true
+2026-10-23T00:02:13.3085624Z   ssh-user: git
+2026-10-23T00:02:13.3086065Z   persist-credentials: true
+2026-10-23T00:02:13.3086572Z   clean: true
+2026-10-23T00:02:13.3087023Z   sparse-checkout-cone-mode: true
+2026-10-23T00:02:13.3087544Z   fetch-depth: 1
+2026-10-23T00:02:13.3087974Z   fetch-tags: false
+2026-10-23T00:02:13.3088423Z   show-progress: true
+2026-10-23T00:02:13.3088866Z   lfs: false
+2026-10-23T00:02:13.3089274Z   submodules: false
+2026-10-23T00:02:13.3089725Z   set-safe-directory: true
+2026-10-23T00:02:13.3090227Z   allow-unsafe-pr-checkout: false
+2026-10-23T00:02:13.3091005Z ##[endgroup]
+2026-10-23T00:02:13.4317310Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.4320932Z ##[group]Getting Git version info
+2026-10-23T00:02:13.4323178Z Working directory is '/home/runner/work/2_Qwen/2_Qwen'
+2026-10-23T00:02:13.4325814Z [command]/usr/bin/git version
+2026-10-23T00:02:13.4327090Z git version 2.55.0
+2026-10-23T00:02:13.4385244Z ##[endgroup]
+2026-10-23T00:02:13.4392921Z Temporarily overriding HOME='/home/runner/work/_temp/624e8b51-12c2-4676-a0b4-4f80048beb18' before making global git config changes
+2026-10-23T00:02:13.4394941Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T00:02:13.4397117Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:13.4478598Z Deleting the contents of '/home/runner/work/2_Qwen/2_Qwen'
+2026-10-23T00:02:13.4480174Z ##[group]Determining repository object format
+2026-10-23T00:02:13.4481594Z ##[endgroup]
+2026-10-23T00:02:13.4483014Z ##[group]Initializing the repository
+2026-10-23T00:02:13.4484564Z [command]/usr/bin/git init /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:13.4707072Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-23T00:02:13.4710823Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-23T00:02:13.4713531Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-23T00:02:13.4719308Z hint: call:
+2026-10-23T00:02:13.4726540Z hint:
+2026-10-23T00:02:13.4727618Z hint: 	git config --global init.defaultBranch <name>
+2026-10-23T00:02:13.4728783Z hint:
+2026-10-23T00:02:13.4729824Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-23T00:02:13.4731593Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-23T00:02:13.4733380Z hint:
+2026-10-23T00:02:13.4734514Z hint: 	git branch -m <name>
+2026-10-23T00:02:13.4735704Z hint:
+2026-10-23T00:02:13.4737230Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-23T00:02:13.4739500Z Initialized empty Git repository in /home/runner/work/2_Qwen/2_Qwen/.git/
+2026-10-23T00:02:13.4743939Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.4747734Z ##[endgroup]
+2026-10-23T00:02:13.4749097Z ##[group]Disabling automatic garbage collection
+2026-10-23T00:02:13.4750578Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-23T00:02:13.5020075Z ##[endgroup]
+2026-10-23T00:02:13.5021441Z ##[group]Setting up auth
+2026-10-23T00:02:13.5022755Z Removing SSH command configuration
+2026-10-23T00:02:13.5024203Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T00:02:13.5028283Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T00:02:13.6295769Z Removing HTTP extra header
+2026-10-23T00:02:13.6297783Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T00:02:13.6307392Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T00:02:13.6400173Z Removing includeIf entries pointing to credentials config files
+2026-10-23T00:02:13.6423756Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T00:02:13.6514297Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T00:02:13.6835196Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-23T00:02:13.6885834Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path /home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:13.6914644Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:13.6954255Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:13.6991182Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:13.7027716Z ##[endgroup]
+2026-10-23T00:02:13.7029485Z ##[group]Fetching the repository
+2026-10-23T00:02:13.7035960Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21:refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.1579425Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:14.1595079Z  * [new ref]         37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21 -> origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.1601740Z [command]/usr/bin/git branch --list --remote origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.1657527Z   origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.1684407Z [command]/usr/bin/git rev-parse refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.1717215Z 37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21
+2026-10-23T00:02:14.1737288Z ##[endgroup]
+2026-10-23T00:02:14.1738784Z ##[group]Determining the checkout info
+2026-10-23T00:02:14.1740433Z ##[endgroup]
+2026-10-23T00:02:14.1741527Z [command]/usr/bin/git sparse-checkout disable
+2026-10-23T00:02:14.1788647Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-23T00:02:14.1823024Z ##[group]Checking out the ref
+2026-10-23T00:02:14.1828459Z [command]/usr/bin/git checkout --progress --force -B perf/firmus-decode-r2-20261023 refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:14.2423324Z Switched to a new branch 'perf/firmus-decode-r2-20261023'
+2026-10-23T00:02:14.2439484Z branch 'perf/firmus-decode-r2-20261023' set up to track 'origin/perf/firmus-decode-r2-20261023'.
+2026-10-23T00:02:14.2444103Z ##[endgroup]
+2026-10-23T00:02:14.2494703Z [command]/usr/bin/git log -1 --format=%H
+2026-10-23T00:02:14.2525146Z 37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21
+2026-10-23T00:02:14.2891259Z ##[group]Run astral-sh/setup-uv@v7
+2026-10-23T00:02:14.2891944Z with:
+2026-10-23T00:02:14.2892578Z   activate-environment: false
+2026-10-23T00:02:14.2893279Z   working-directory: /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:14.2898539Z   github-token: ***
+2026-10-23T00:02:14.2899025Z   enable-cache: auto
+2026-10-23T00:02:14.2900405Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-10-23T00:02:14.2901969Z   restore-cache: true
+2026-10-23T00:02:14.2902606Z   save-cache: true
+2026-10-23T00:02:14.2903135Z   prune-cache: true
+2026-10-23T00:02:14.2903619Z   cache-python: false
+2026-10-23T00:02:14.2904161Z   ignore-nothing-to-cache: false
+2026-10-23T00:02:14.2904798Z   ignore-empty-workdir: false
+2026-10-23T00:02:14.2905387Z   add-problem-matchers: true
+2026-10-23T00:02:14.2905961Z   resolution-strategy: highest
+2026-10-23T00:02:14.2906514Z ##[endgroup]
+2026-10-23T00:02:14.5155146Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-10-23T00:02:14.5174282Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-10-23T00:02:14.5194246Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-10-23T00:02:14.5213786Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-10-23T00:02:14.5244238Z Could not determine uv version from uv.toml or pyproject.toml. Falling back to latest.
+2026-10-23T00:02:14.5274561Z Fetching version data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-10-23T00:02:14.6303185Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-10-23T00:02:14.8178737Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/7e3d077e-63ac-4f79-82ef-372a3b08903e -f /home/runner/work/_temp/56cf78b4-4172-48f5-88cd-b450b4cc06c1
+2026-10-23T00:02:15.0696581Z Added /home/runner/.local/bin to the path
+2026-10-23T00:02:15.0699970Z Added /opt/hostedtoolcache/uv/0.13.5/x86_64 to the path
+2026-10-23T00:02:15.0704129Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:15.0710141Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-10-23T00:02:15.0738060Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:15.0739889Z Successfully installed uv version 0.13.5
+2026-10-23T00:02:15.1390303Z Searching files using cache dependency glob: /home/runner/work/2_Qwen/2_Qwen/**/*requirements*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*requirements*.in,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.in,/home/runner/work/2_Qwen/2_Qwen/**/pyproject.toml,/home/runner/work/2_Qwen/2_Qwen/**/uv.lock,/home/runner/work/2_Qwen/2_Qwen/**/*.py.lock
+2026-10-23T00:02:15.1828452Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/pyproject.toml
+2026-10-23T00:02:15.1954200Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/uv.lock
+2026-10-23T00:02:15.2576302Z Found 2 files to hash.
+2026-10-23T00:02:15.2657482Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-26.04-3.14.4-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-10-23T00:02:15.3164864Z No GitHub Actions cache found for key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-26.04-3.14.4-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-10-23T00:02:15.3898083Z ##[group]Run uvx --from huggingface_hub==0.36.0 hf download Qwen/Qwen3-235B-A22B-Instruct-2507 --revision ac9c66cc9b46af7306746a9250f23d47083d689e --include config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --local-dir "${RUNNER_TEMP}/qwen-tokenizer"
+2026-10-23T00:02:15.3907173Z [36;1muvx --from huggingface_hub==0.36.0 hf download Qwen/Qwen3-235B-A22B-Instruct-2507 --revision ac9c66cc9b46af7306746a9250f23d47083d689e --include config.json generation_config.json merges.txt tokenizer.json tokenizer_config.json vocab.json --local-dir "${RUNNER_TEMP}/qwen-tokenizer"[0m
+2026-10-23T00:02:15.4076402Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:15.4077638Z env:
+2026-10-23T00:02:15.4078920Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:15.4080778Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:15.4082480Z ##[endgroup]
+2026-10-23T00:02:16.0091871Z Downloading hf-xet (4.0MiB)
+2026-10-23T00:02:16.0995026Z  Downloaded hf-xet
+2026-10-23T00:02:16.1153276Z Installed 13 packages in 14ms
+2026-10-23T00:02:16.9183067Z 
+2026-10-23T00:02:16.9727889Z Fetching 6 files:   0%|          | 0/6 [00:00<?, ?it/s]Downloading 'generation_config.json' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/3EVKVggOldJcKSsGjSdoUCN1AyQ=.432531a002c181a19de338313d2375e9d7494d7e.incomplete'
+2026-10-23T00:02:16.9858783Z Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/generation_config.json
+2026-10-23T00:02:16.9945059Z Downloading 'config.json' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/8_PA_wEVGiVa2goH2H4KQOQpvVY=.38dd117fc9a3231d3b14b1e43a05f7461daee2a5.incomplete'
+2026-10-23T00:02:16.9964060Z Downloading 'vocab.json' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/j3m-Hy6QvBddw8RXA1uSWl1AJ0c=.4783fe10ac3adce15ac8f358ef5462739852c569.incomplete'
+2026-10-23T00:02:17.0000018Z Downloading 'merges.txt' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/PtHk0z_I45atnj23IIRhTExwT3w=.20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0.incomplete'
+2026-10-23T00:02:17.0007038Z Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/config.json
+2026-10-23T00:02:17.0020811Z Downloading 'tokenizer_config.json' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/vzaExXFZNBay89bvlQv-ZcI6BTg=.51c1be0d9192e7f6e6596de71d0f07d58fbc32ac.incomplete'
+2026-10-23T00:02:17.0093018Z Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/tokenizer_config.json
+2026-10-23T00:02:17.0164313Z Downloading 'tokenizer.json' to '/home/runner/work/_temp/qwen-tokenizer/.cache/huggingface/download/HgM_lKo9sdSCfRtVg7MMFS7EKqo=.aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4.incomplete'
+2026-10-23T00:02:17.0350381Z Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/merges.txt
+2026-10-23T00:02:17.0356575Z 
+2026-10-23T00:02:17.0385283Z Fetching 6 files:  67%|██████▋   | 4/6 [00:00<00:00, 33.69it/s]Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/vocab.json
+2026-10-23T00:02:17.6151193Z Download complete. Moving file to /home/runner/work/_temp/qwen-tokenizer/tokenizer.json
+2026-10-23T00:02:17.6161534Z 
+2026-10-23T00:02:17.6162971Z Fetching 6 files: 100%|██████████| 6/6 [00:00<00:00,  8.58it/s]
+2026-10-23T00:02:17.6171187Z /home/runner/work/_temp/qwen-tokenizer
+2026-10-23T00:02:17.6816574Z ##[group]Run mkdir -p "${RUNNER_TEMP}/gigatoken-source"
+2026-10-23T00:02:17.6817058Z [36;1mmkdir -p "${RUNNER_TEMP}/gigatoken-source"[0m
+2026-10-23T00:02:17.6817897Z [36;1mgit -C "${RUNNER_TEMP}/gigatoken-source" apply --include=python/sglang/srt/utils/hf_transformers/gigatoken_encoder.py "${GITHUB_WORKSPACE}/patches/sglang/gigatoken-encode.patch"[0m
+2026-10-23T00:02:17.6884350Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:17.6884649Z env:
+2026-10-23T00:02:17.6884955Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:17.6885424Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:17.6885774Z ##[endgroup]
+2026-10-23T00:02:17.7057628Z ##[group]Run uv run --no-project --python 3.12 --with gigatoken==0.10.0 --with transformers==5.12.1 --with tokenizers==0.22.2 --with jinja2==3.1.6 python scripts/check-gigatoken.py "${RUNNER_TEMP}/gigatoken-source" "${RUNNER_TEMP}/qwen-tokenizer" --adapter-only
+2026-10-23T00:02:17.7059475Z [36;1muv run --no-project --python 3.12 --with gigatoken==0.10.0 --with transformers==5.12.1 --with tokenizers==0.22.2 --with jinja2==3.1.6 python scripts/check-gigatoken.py "${RUNNER_TEMP}/gigatoken-source" "${RUNNER_TEMP}/qwen-tokenizer" --adapter-only[0m
+2026-10-23T00:02:17.7118713Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:17.7118976Z env:
+2026-10-23T00:02:17.7119256Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:17.7119699Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:17.7120043Z   HF_HUB_OFFLINE: 1
+2026-10-23T00:02:17.7120255Z ##[endgroup]
+2026-10-23T00:02:17.8615417Z Downloading cpython-3.12.15-linux-x86_64-gnu (download) (32.9MiB)
+2026-10-23T00:02:18.5163414Z  Downloaded cpython-3.12.15-linux-x86_64-gnu (download)
+2026-10-23T00:02:18.9936480Z Downloading numpy (16.0MiB)
+2026-10-23T00:02:18.9948412Z Downloading pygments (1.2MiB)
+2026-10-23T00:02:18.9963063Z Downloading transformers (10.6MiB)
+2026-10-23T00:02:19.0086951Z Downloading tokenizers (3.1MiB)
+2026-10-23T00:02:19.0243652Z Downloading gigatoken (5.1MiB)
+2026-10-23T00:02:19.1845342Z  Downloaded tokenizers
+2026-10-23T00:02:19.2133981Z  Downloaded pygments
+2026-10-23T00:02:19.2396253Z  Downloaded gigatoken
+2026-10-23T00:02:19.4250029Z  Downloaded numpy
+2026-10-23T00:02:19.4551081Z  Downloaded transformers
+2026-10-23T00:02:19.5423729Z Installed 32 packages in 86ms
+2026-10-23T00:02:21.4467131Z [transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+2026-10-23T00:02:26.4791211Z {
+2026-10-23T00:02:26.4791908Z   "parity_cases": 2220,
+2026-10-23T00:02:26.4793205Z   "template_and_fallback_checks": "passed",
+2026-10-23T00:02:26.4794100Z   "loader_static_check": "not run (adapter only)",
+2026-10-23T00:02:26.4798162Z   "versions": {
+2026-10-23T00:02:26.4798701Z     "gigatoken": "0.10.0",
+2026-10-23T00:02:26.4799251Z     "transformers": "5.12.1",
+2026-10-23T00:02:26.4799787Z     "tokenizers": "0.22.2"
+2026-10-23T00:02:26.4800266Z   },
+2026-10-23T00:02:26.4800724Z   "benchmark_prompts": 48,
+2026-10-23T00:02:26.4801251Z   "input_tokens": 4159.083333333333,
+2026-10-23T00:02:26.4801934Z   "huggingface": {
+2026-10-23T00:02:26.4802723Z     "median_ms": 7.935739,
+2026-10-23T00:02:26.4817377Z     "p95_ms": 8.25752
+2026-10-23T00:02:26.4817913Z   },
+2026-10-23T00:02:26.4818487Z   "gigatoken": {
+2026-10-23T00:02:26.4818959Z     "median_ms": 0.126421,
+2026-10-23T00:02:26.4819470Z     "p95_ms": 0.151693
+2026-10-23T00:02:26.4819935Z   }
+2026-10-23T00:02:26.4820343Z }
+2026-10-23T00:02:26.6820376Z ##[group]Run printf '### gigatoken CPU compatibility\n\nThe adapter parity check is CPU-only; GPU throughput and EAGLE acceptance are measured by the Genkai job.\n' >>"${GITHUB_STEP_SUMMARY}"
+2026-10-23T00:02:26.6821709Z [36;1mprintf '### gigatoken CPU compatibility\n\nThe adapter parity check is CPU-only; GPU throughput and EAGLE acceptance are measured by the Genkai job.\n' >>"${GITHUB_STEP_SUMMARY}"[0m
+2026-10-23T00:02:26.6884153Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:26.6884401Z env:
+2026-10-23T00:02:26.6884686Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:26.6885078Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:26.6885375Z ##[endgroup]
+2026-10-23T00:02:26.7100117Z Post job cleanup.
+2026-10-23T00:02:26.8291160Z UV_CACHE_DIR is already set to /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:26.8296559Z UV_PYTHON_INSTALL_DIR is already set to /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:26.8306193Z Pruning cache...
+2026-10-23T00:02:26.8324674Z [command]/opt/hostedtoolcache/uv/0.13.5/x86_64/uv cache prune --ci --force
+2026-10-23T00:02:26.8448351Z Pruning cache at: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:27.2912818Z Removed 11951 files (190.6MiB)
+2026-10-23T00:02:27.2947091Z Including uv cache path: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:27.3113907Z [command]/usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /home/runner/work/2_Qwen/2_Qwen --files-from manifest.txt --use-compress-program zstdmt
+2026-10-23T00:02:27.6533893Z Sent 3336249 of 3336249 (100.0%), 20.1 MBs/sec
+2026-10-23T00:02:27.7756146Z uv cache saved with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-26.04-3.14.4-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-10-23T00:02:27.8407392Z Post job cleanup.
+2026-10-23T00:02:27.9343289Z [command]/usr/bin/git version
+2026-10-23T00:02:27.9423252Z git version 2.55.0
+2026-10-23T00:02:27.9523608Z Temporarily overriding HOME='/home/runner/work/_temp/9c84401f-0ed0-43ca-9ab0-c947c2c471a2' before making global git config changes
+2026-10-23T00:02:27.9533442Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T00:02:27.9541044Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:27.9625311Z Removing SSH command configuration
+2026-10-23T00:02:27.9645029Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T00:02:27.9823700Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T00:02:28.0596009Z Removing HTTP extra header
+2026-10-23T00:02:28.0613587Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T00:02:28.0753883Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T00:02:28.1715582Z Removing includeIf entries pointing to credentials config files
+2026-10-23T00:02:28.1717502Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T00:02:28.1790800Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-10-23T00:02:28.1796262Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-10-23T00:02:28.1813069Z includeif.gitdir:/github/workspace/.git.path
+2026-10-23T00:02:28.1819313Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-23T00:02:28.1844081Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-10-23T00:02:28.1883075Z /home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:28.1928302Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-8a684041\-61df\-4808\-9516\-04d788428782\.config
+2026-10-23T00:02:28.2033488Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-10-23T00:02:28.2070731Z /home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:28.2117163Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-8a684041\-61df\-4808\-9516\-04d788428782\.config
+2026-10-23T00:02:28.2168317Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-23T00:02:28.2197901Z /github/runner_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:28.2239645Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-8a684041\-61df\-4808\-9516\-04d788428782\.config
+2026-10-23T00:02:28.2266408Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-23T00:02:28.2303279Z /github/runner_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config
+2026-10-23T00:02:28.2341542Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-8a684041\-61df\-4808\-9516\-04d788428782\.config
+2026-10-23T00:02:28.2386108Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T00:02:28.2829823Z Removing credentials config '/home/runner/work/_temp/git-credentials-8a684041-61df-4808-9516-04d788428782.config'
+2026-10-23T00:02:28.2979636Z Cleaning up orphan processes
+
+===== 8_制御処理を検証 _ validate.txt =====
+﻿2026-10-23T00:02:12.5287226Z Current runner version: '2.338.0'
+2026-10-23T00:02:12.5313303Z ##[group]Runner Image Provisioner
+2026-10-23T00:02:12.5314095Z Hosted Compute Agent
+2026-10-23T00:02:12.5315048Z Version: 20261012.601
+2026-10-23T00:02:12.5315626Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-23T00:02:12.5316308Z Build Date: 2026-10-12T17:48:21Z
+2026-10-23T00:02:12.5316963Z Worker ID: {4460f7d3-23d7-4137-942b-c91d6d19ebce}
+2026-10-23T00:02:12.5317611Z Region: westus3
+2026-10-23T00:02:12.5318137Z Cloud: Azure
+2026-10-23T00:02:12.5318614Z ##[endgroup]
+2026-10-23T00:02:12.5320221Z ##[group]Operating System
+2026-10-23T00:02:12.5320843Z Ubuntu
+2026-10-23T00:02:12.5321328Z 26.04.1
+2026-10-23T00:02:12.5321763Z LTS
+2026-10-23T00:02:12.5322293Z ##[endgroup]
+2026-10-23T00:02:12.5322778Z ##[group]Runner Image
+2026-10-23T00:02:12.5323433Z Image: ubuntu-26.04
+2026-10-23T00:02:12.5323964Z Version: 20261012.163.1
+2026-10-23T00:02:12.5325169Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261012.163/images/ubuntu/Ubuntu2604-Readme.md
+2026-10-23T00:02:12.5326545Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261012.163
+2026-10-23T00:02:12.5327472Z ##[endgroup]
+2026-10-23T00:02:12.5328455Z ##[group]GITHUB_TOKEN Permissions
+2026-10-23T00:02:12.5330753Z Contents: read
+2026-10-23T00:02:12.5331288Z Metadata: read
+2026-10-23T00:02:12.5331756Z ##[endgroup]
+2026-10-23T00:02:12.5334360Z Secret source: Actions
+2026-10-23T00:02:12.5335179Z Cache mode: write
+2026-10-23T00:02:12.5335897Z Prepare workflow directory
+2026-10-23T00:02:12.5746154Z Prepare all required actions
+2026-10-23T00:02:12.5813190Z Getting action download info
+2026-10-23T00:02:12.8877444Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-23T00:02:13.0024276Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-10-23T00:02:13.8012601Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:13.8015587Z Complete job name: 制御処理を検証 / validate
+2026-10-23T00:02:13.8505466Z ##[group]Run actions/checkout@v7
+2026-10-23T00:02:13.8506045Z with:
+2026-10-23T00:02:13.8506411Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.8508934Z   token: ***
+2026-10-23T00:02:13.8509323Z   ssh-strict: true
+2026-10-23T00:02:13.8509597Z   ssh-user: git
+2026-10-23T00:02:13.8509872Z   persist-credentials: true
+2026-10-23T00:02:13.8510195Z   clean: true
+2026-10-23T00:02:13.8510495Z   sparse-checkout-cone-mode: true
+2026-10-23T00:02:13.8510832Z   fetch-depth: 1
+2026-10-23T00:02:13.8511100Z   fetch-tags: false
+2026-10-23T00:02:13.8511372Z   show-progress: true
+2026-10-23T00:02:13.8511665Z   lfs: false
+2026-10-23T00:02:13.8511948Z   submodules: false
+2026-10-23T00:02:13.8512270Z   set-safe-directory: true
+2026-10-23T00:02:13.8512581Z   allow-unsafe-pr-checkout: false
+2026-10-23T00:02:13.8512991Z ##[endgroup]
+2026-10-23T00:02:13.9270650Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.9274789Z ##[group]Getting Git version info
+2026-10-23T00:02:13.9275623Z Working directory is '/home/runner/work/2_Qwen/2_Qwen'
+2026-10-23T00:02:13.9381539Z [command]/usr/bin/git version
+2026-10-23T00:02:13.9394973Z git version 2.55.0
+2026-10-23T00:02:13.9430397Z ##[endgroup]
+2026-10-23T00:02:13.9492785Z Temporarily overriding HOME='/home/runner/work/_temp/7c384dcb-2334-4543-9f39-498e4387b61c' before making global git config changes
+2026-10-23T00:02:13.9494522Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T00:02:13.9498292Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:13.9501866Z Deleting the contents of '/home/runner/work/2_Qwen/2_Qwen'
+2026-10-23T00:02:13.9503242Z ##[group]Determining repository object format
+2026-10-23T00:02:13.9504825Z ##[endgroup]
+2026-10-23T00:02:13.9505531Z ##[group]Initializing the repository
+2026-10-23T00:02:13.9506962Z [command]/usr/bin/git init /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:13.9562338Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-23T00:02:13.9577293Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-23T00:02:13.9580822Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-23T00:02:13.9581884Z hint: call:
+2026-10-23T00:02:13.9582732Z hint:
+2026-10-23T00:02:13.9584716Z hint: 	git config --global init.defaultBranch <name>
+2026-10-23T00:02:13.9585309Z hint:
+2026-10-23T00:02:13.9585877Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-23T00:02:13.9586787Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-23T00:02:13.9587510Z hint:
+2026-10-23T00:02:13.9588021Z hint: 	git branch -m <name>
+2026-10-23T00:02:13.9588652Z hint:
+2026-10-23T00:02:13.9589474Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-23T00:02:13.9590508Z Initialized empty Git repository in /home/runner/work/2_Qwen/2_Qwen/.git/
+2026-10-23T00:02:13.9592454Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:13.9637575Z ##[endgroup]
+2026-10-23T00:02:13.9638377Z ##[group]Disabling automatic garbage collection
+2026-10-23T00:02:13.9649701Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-23T00:02:13.9716760Z ##[endgroup]
+2026-10-23T00:02:13.9717486Z ##[group]Setting up auth
+2026-10-23T00:02:13.9718034Z Removing SSH command configuration
+2026-10-23T00:02:13.9718792Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T00:02:13.9816026Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T00:02:14.0204520Z Removing HTTP extra header
+2026-10-23T00:02:14.0205490Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T00:02:14.0234823Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T00:02:14.0492939Z Removing includeIf entries pointing to credentials config files
+2026-10-23T00:02:14.0494045Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T00:02:14.0516392Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T00:02:14.0756093Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-23T00:02:14.0792685Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path /home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:02:14.0822652Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:02:14.0859839Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:02:14.0881122Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:02:14.0909440Z ##[endgroup]
+2026-10-23T00:02:14.0910463Z ##[group]Fetching the repository
+2026-10-23T00:02:14.0914673Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21:refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1065623Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-10-23T00:02:15.1068645Z  * [new ref]         37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21 -> origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1073208Z [command]/usr/bin/git branch --list --remote origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1100311Z   origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1104009Z [command]/usr/bin/git rev-parse refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1126227Z 37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21
+2026-10-23T00:02:15.1130594Z ##[endgroup]
+2026-10-23T00:02:15.1132163Z ##[group]Determining the checkout info
+2026-10-23T00:02:15.1134472Z ##[endgroup]
+2026-10-23T00:02:15.1135748Z [command]/usr/bin/git sparse-checkout disable
+2026-10-23T00:02:15.1177374Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-23T00:02:15.1206576Z ##[group]Checking out the ref
+2026-10-23T00:02:15.1209974Z [command]/usr/bin/git checkout --progress --force -B perf/firmus-decode-r2-20261023 refs/remotes/origin/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:15.1808740Z Switched to a new branch 'perf/firmus-decode-r2-20261023'
+2026-10-23T00:02:15.1811646Z branch 'perf/firmus-decode-r2-20261023' set up to track 'origin/perf/firmus-decode-r2-20261023'.
+2026-10-23T00:02:15.1817468Z ##[endgroup]
+2026-10-23T00:02:15.1859963Z [command]/usr/bin/git log -1 --format=%H
+2026-10-23T00:02:15.1891645Z 37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21
+2026-10-23T00:02:15.2266992Z ##[group]Run astral-sh/setup-uv@v7
+2026-10-23T00:02:15.2267679Z with:
+2026-10-23T00:02:15.2268221Z   activate-environment: false
+2026-10-23T00:02:15.2268990Z   working-directory: /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:02:15.2274621Z   github-token: ***
+2026-10-23T00:02:15.2275194Z   enable-cache: auto
+2026-10-23T00:02:15.2276611Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-10-23T00:02:15.2278204Z   restore-cache: true
+2026-10-23T00:02:15.2278785Z   save-cache: true
+2026-10-23T00:02:15.2279480Z   prune-cache: true
+2026-10-23T00:02:15.2280047Z   cache-python: false
+2026-10-23T00:02:15.2280687Z   ignore-nothing-to-cache: false
+2026-10-23T00:02:15.2281407Z   ignore-empty-workdir: false
+2026-10-23T00:02:15.2282076Z   add-problem-matchers: true
+2026-10-23T00:02:15.2282741Z   resolution-strategy: highest
+2026-10-23T00:02:15.2283375Z ##[endgroup]
+2026-10-23T00:02:15.3591628Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-10-23T00:02:15.3595103Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-10-23T00:02:15.3620778Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-10-23T00:02:15.3622994Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-10-23T00:02:15.3640508Z Could not determine uv version from uv.toml or pyproject.toml. Falling back to latest.
+2026-10-23T00:02:15.3690985Z Fetching version data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-10-23T00:02:15.4714636Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-10-23T00:02:15.6401515Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/622d9965-5557-4bba-a70f-151d36f5aec0 -f /home/runner/work/_temp/d66a65a5-263e-4167-a699-99f948dff44e
+2026-10-23T00:02:16.4603767Z Added /home/runner/.local/bin to the path
+2026-10-23T00:02:16.4607074Z Added /opt/hostedtoolcache/uv/0.13.5/x86_64 to the path
+2026-10-23T00:02:16.4607824Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:16.4608710Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-10-23T00:02:16.4629482Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:16.4629719Z Successfully installed uv version 0.13.5
+2026-10-23T00:02:16.5131941Z Searching files using cache dependency glob: /home/runner/work/2_Qwen/2_Qwen/**/*requirements*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*requirements*.in,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.in,/home/runner/work/2_Qwen/2_Qwen/**/pyproject.toml,/home/runner/work/2_Qwen/2_Qwen/**/uv.lock,/home/runner/work/2_Qwen/2_Qwen/**/*.py.lock
+2026-10-23T00:02:16.5414245Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/pyproject.toml
+2026-10-23T00:02:16.5486222Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/uv.lock
+2026-10-23T00:02:16.5691034Z Found 2 files to hash.
+2026-10-23T00:02:16.5761652Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-26.04-3.14.4-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-10-23T00:02:16.7653899Z No GitHub Actions cache found for key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-26.04-3.14.4-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-10-23T00:02:16.8291376Z ##[group]Run uv run --no-project python scripts/check-kernel-experiment-tags.py
+2026-10-23T00:02:16.8291784Z [36;1muv run --no-project python scripts/check-kernel-experiment-tags.py[0m
+2026-10-23T00:02:16.8418546Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:16.8418712Z env:
+2026-10-23T00:02:16.8418883Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:16.8419109Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:16.8419472Z   QWEN_COMMIT_MESSAGE: wip merge s2
+2026-10-23T00:02:16.8419634Z ##[endgroup]
+2026-10-23T00:02:16.8718734Z ##[group]Run find scripts platforms containers aws submission -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' -o -name '*.sbatch' \) -print0 | xargs -0 -r -n1 bash -n
+2026-10-23T00:02:16.8719629Z [36;1mfind scripts platforms containers aws submission -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' -o -name '*.sbatch' \) -print0 | xargs -0 -r -n1 bash -n[0m
+2026-10-23T00:02:16.8772105Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:16.8772270Z env:
+2026-10-23T00:02:16.8772464Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:16.8772718Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:16.8772921Z ##[endgroup]
+2026-10-23T00:02:16.9455625Z ##[group]Run uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'
+2026-10-23T00:02:16.9456526Z [36;1muvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'[0m
+2026-10-23T00:02:16.9513500Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:16.9513667Z env:
+2026-10-23T00:02:16.9513835Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:16.9514065Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:16.9514245Z ##[endgroup]
+2026-10-23T00:02:17.0828763Z Installed 1 package in 1ms
+2026-10-23T00:02:17.2046544Z ##[group]Run uvx --from 'actionlint-py==1.7.12.24' actionlint
+2026-10-23T00:02:17.2046835Z [36;1muvx --from 'actionlint-py==1.7.12.24' actionlint[0m
+2026-10-23T00:02:17.2101067Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:17.2101225Z env:
+2026-10-23T00:02:17.2101405Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:17.2101640Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:17.2101830Z ##[endgroup]
+2026-10-23T00:02:17.2959594Z    Building actionlint-py==1.7.12.24
+2026-10-23T00:02:18.3712748Z       Built actionlint-py==1.7.12.24
+2026-10-23T00:02:18.4200784Z Installed 1 package in 16ms
+2026-10-23T00:02:19.4596881Z ##[group]Run uvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml
+2026-10-23T00:02:19.4597559Z [36;1muvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml[0m
+2026-10-23T00:02:19.4654121Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:19.4654278Z env:
+2026-10-23T00:02:19.4654444Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:19.4654663Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:19.4654840Z ##[endgroup]
+2026-10-23T00:02:20.0743611Z Downloading sympy (6.0MiB)
+2026-10-23T00:02:20.0744253Z Downloading networkx (2.0MiB)
+2026-10-23T00:02:20.0772654Z Downloading cfn-lint (5.4MiB)
+2026-10-23T00:02:20.2336199Z  Downloaded networkx
+2026-10-23T00:02:20.2661001Z  Downloaded sympy
+2026-10-23T00:02:20.3188367Z  Downloaded cfn-lint
+2026-10-23T00:02:21.0011186Z Installed 9 packages in 660ms
+2026-10-23T00:02:23.3182458Z ##[group]Run ! grep -RIn '\\$' scripts platforms containers aws .github/workflows
+2026-10-23T00:02:23.3183029Z [36;1m! grep -RIn '\\$' scripts platforms containers aws .github/workflows[0m
+2026-10-23T00:02:23.3251670Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:23.3251971Z env:
+2026-10-23T00:02:23.3252259Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:23.3252629Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:23.3252924Z ##[endgroup]
+2026-10-23T00:02:23.3442723Z ##[group]Run uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers
+2026-10-23T00:02:23.3443190Z [36;1muv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts containers[0m
+2026-10-23T00:02:23.3492972Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:23.3493164Z env:
+2026-10-23T00:02:23.3493353Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:23.3493600Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:23.3493784Z ##[endgroup]
+2026-10-23T00:02:23.3962780Z Using CPython 3.14.4 interpreter at: /usr/bin/python3
+2026-10-23T00:02:23.3963547Z Creating virtual environment at: qwen-experiment-metrics/.venv
+2026-10-23T00:02:23.4016192Z    Building qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-10-23T00:02:23.4557666Z Downloading pygments (1.2MiB)
+2026-10-23T00:02:23.4739674Z Downloading ruff (10.9MiB)
+2026-10-23T00:02:23.5177088Z  Downloaded pygments
+2026-10-23T00:02:23.5760966Z  Downloaded ruff
+2026-10-23T00:02:23.7802820Z       Built qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-10-23T00:02:23.7878356Z Installed 8 packages in 6ms
+2026-10-23T00:02:23.8241319Z All checks passed!
+2026-10-23T00:02:23.8353616Z ##[group]Run uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests
+2026-10-23T00:02:23.8354027Z [36;1muv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests[0m
+2026-10-23T00:02:23.8404888Z shell: /usr/bin/bash -e {0}
+2026-10-23T00:02:23.8405052Z env:
+2026-10-23T00:02:23.8405258Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-23T00:02:23.8405519Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-23T00:02:23.8405721Z ##[endgroup]
+2026-10-23T00:02:32.5436396Z ........................................................................ [  8%]
+2026-10-23T00:02:34.3232886Z ............................................................ssssssssssss [ 17%]
+2026-10-23T00:02:34.4782148Z ssssssssssssssssss.ssssss............................................... [ 25%]
+2026-10-23T00:02:34.6530821Z ........................................................................ [ 34%]
+2026-10-23T00:02:34.8483556Z ........................................................................ [ 43%]
+2026-10-23T00:02:35.4701502Z ...................................................FFFF..........FFF.... [ 51%]
+2026-10-23T00:02:38.2650617Z .........................s.............................................. [ 60%]
+2026-10-23T00:04:34.1451624Z ........................................................................ [ 69%]
+2026-10-23T00:04:55.6270217Z ......ss.s..........................ssssss.............................. [ 77%]
+2026-10-23T00:04:56.5615141Z ........................................................................ [ 86%]
+2026-10-23T00:04:59.3053560Z ..............s...................................................................................................         [100%]
+2026-10-23T00:04:59.3054322Z =================================== FAILURES ===================================
+2026-10-23T00:04:59.3055139Z ___ test_numeric_selection_check_requires_explicit_pass_and_saves_log[True] ____
+2026-10-23T00:04:59.3055694Z 
+2026-10-23T00:04:59.3055908Z status = True
+2026-10-23T00:04:59.3056136Z 
+2026-10-23T00:04:59.3056449Z     @pytest.mark.parametrize("status", [True, False, None, "exception"])
+2026-10-23T00:04:59.3057147Z     def test_numeric_selection_check_requires_explicit_pass_and_saves_log(status):
+2026-10-23T00:04:59.3057708Z         ns = selector_functions()
+2026-10-23T00:04:59.3073247Z     
+2026-10-23T00:04:59.3073675Z         def check():
+2026-10-23T00:04:59.3074071Z             print("numeric diagnostic")
+2026-10-23T00:04:59.3074481Z             if status == "exception":
+2026-10-23T00:04:59.3074898Z                 raise AssertionError("wrong gate output")
+2026-10-23T00:04:59.3075326Z             return status
+2026-10-23T00:04:59.3075654Z     
+2026-10-23T00:04:59.3076015Z         ns["run_path"] = lambda path: {"check_decode_gate": check}
+2026-10-23T00:04:59.3076479Z         result = ns["check_gate_for_selection"]()
+2026-10-23T00:04:59.3076913Z >       assert result["passed"] is (status is True)
+2026-10-23T00:04:59.3077337Z E       assert False is (True is True)
+2026-10-23T00:04:59.3077623Z 
+2026-10-23T00:04:59.3077969Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:261: AssertionError
+2026-10-23T00:04:59.3078588Z ___ test_numeric_selection_check_requires_explicit_pass_and_saves_log[False] ___
+2026-10-23T00:04:59.3079021Z 
+2026-10-23T00:04:59.3079383Z status = False
+2026-10-23T00:04:59.3079639Z 
+2026-10-23T00:04:59.3079953Z     @pytest.mark.parametrize("status", [True, False, None, "exception"])
+2026-10-23T00:04:59.3080553Z     def test_numeric_selection_check_requires_explicit_pass_and_saves_log(status):
+2026-10-23T00:04:59.3081054Z         ns = selector_functions()
+2026-10-23T00:04:59.3081395Z     
+2026-10-23T00:04:59.3081684Z         def check():
+2026-10-23T00:04:59.3082023Z             print("numeric diagnostic")
+2026-10-23T00:04:59.3082400Z             if status == "exception":
+2026-10-23T00:04:59.3082804Z                 raise AssertionError("wrong gate output")
+2026-10-23T00:04:59.3083842Z             return status
+2026-10-23T00:04:59.3084190Z     
+2026-10-23T00:04:59.3084540Z         ns["run_path"] = lambda path: {"check_decode_gate": check}
+2026-10-23T00:04:59.3084975Z         result = ns["check_gate_for_selection"]()
+2026-10-23T00:04:59.3085389Z         assert result["passed"] is (status is True)
+2026-10-23T00:04:59.3085810Z >       assert "numeric diagnostic" in result["log"]
+2026-10-23T00:04:59.3086266Z E       AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3086592Z 
+2026-10-23T00:04:59.3086921Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:262: AssertionError
+2026-10-23T00:04:59.3087520Z ___ test_numeric_selection_check_requires_explicit_pass_and_saves_log[None] ____
+2026-10-23T00:04:59.3087925Z 
+2026-10-23T00:04:59.3088123Z status = None
+2026-10-23T00:04:59.3088358Z 
+2026-10-23T00:04:59.3088646Z     @pytest.mark.parametrize("status", [True, False, None, "exception"])
+2026-10-23T00:04:59.3089340Z     def test_numeric_selection_check_requires_explicit_pass_and_saves_log(status):
+2026-10-23T00:04:59.3089894Z         ns = selector_functions()
+2026-10-23T00:04:59.3090235Z     
+2026-10-23T00:04:59.3090531Z         def check():
+2026-10-23T00:04:59.3090870Z             print("numeric diagnostic")
+2026-10-23T00:04:59.3091245Z             if status == "exception":
+2026-10-23T00:04:59.3091643Z                 raise AssertionError("wrong gate output")
+2026-10-23T00:04:59.3092251Z             return status
+2026-10-23T00:04:59.3092572Z     
+2026-10-23T00:04:59.3092920Z         ns["run_path"] = lambda path: {"check_decode_gate": check}
+2026-10-23T00:04:59.3093368Z         result = ns["check_gate_for_selection"]()
+2026-10-23T00:04:59.3093783Z         assert result["passed"] is (status is True)
+2026-10-23T00:04:59.3094200Z >       assert "numeric diagnostic" in result["log"]
+2026-10-23T00:04:59.3094621Z E       AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3094957Z 
+2026-10-23T00:04:59.3095293Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:262: AssertionError
+2026-10-23T00:04:59.3095889Z _ test_numeric_selection_check_requires_explicit_pass_and_saves_log[exception] _
+2026-10-23T00:04:59.3096292Z 
+2026-10-23T00:04:59.3096502Z status = 'exception'
+2026-10-23T00:04:59.3096890Z 
+2026-10-23T00:04:59.3097253Z     @pytest.mark.parametrize("status", [True, False, None, "exception"])
+2026-10-23T00:04:59.3097857Z     def test_numeric_selection_check_requires_explicit_pass_and_saves_log(status):
+2026-10-23T00:04:59.3098349Z         ns = selector_functions()
+2026-10-23T00:04:59.3098687Z     
+2026-10-23T00:04:59.3098981Z         def check():
+2026-10-23T00:04:59.3099420Z             print("numeric diagnostic")
+2026-10-23T00:04:59.3099785Z             if status == "exception":
+2026-10-23T00:04:59.3100170Z                 raise AssertionError("wrong gate output")
+2026-10-23T00:04:59.3100747Z             return status
+2026-10-23T00:04:59.3101100Z     
+2026-10-23T00:04:59.3101458Z         ns["run_path"] = lambda path: {"check_decode_gate": check}
+2026-10-23T00:04:59.3101905Z         result = ns["check_gate_for_selection"]()
+2026-10-23T00:04:59.3102313Z         assert result["passed"] is (status is True)
+2026-10-23T00:04:59.3102730Z >       assert "numeric diagnostic" in result["log"]
+2026-10-23T00:04:59.3103162Z E       AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3103478Z 
+2026-10-23T00:04:59.3103813Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:262: AssertionError
+2026-10-23T00:04:59.3104411Z _ test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[None] _
+2026-10-23T00:04:59.3104838Z 
+2026-10-23T00:04:59.3105275Z monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f26c40fa660>
+2026-10-23T00:04:59.3111724Z setting = None
+2026-10-23T00:04:59.3112011Z 
+2026-10-23T00:04:59.3112312Z     @pytest.mark.parametrize("setting", [None, "cublas", "triton"])
+2026-10-23T00:04:59.3112938Z     def test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks(monkeypatch, setting):
+2026-10-23T00:04:59.3113817Z         if setting is None:
+2026-10-23T00:04:59.3114250Z             monkeypatch.delenv("SGLANG_DECODE_GATE_GEMM", raising=False)
+2026-10-23T00:04:59.3114830Z         else:
+2026-10-23T00:04:59.3116946Z             monkeypatch.setenv("SGLANG_DECODE_GATE_GEMM", setting)
+2026-10-23T00:04:59.3117520Z         source = ast.parse((ROOT / "scripts/check-firmus-decode-kernels.py").read_text())
+2026-10-23T00:04:59.3118556Z         main = next(node for node in source.body if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
+2026-10-23T00:04:59.3119481Z         calls = []
+2026-10-23T00:04:59.3119940Z         functions = {node.name for node in source.body if isinstance(node, ast.FunctionDef)}
+2026-10-23T00:04:59.3120549Z         ns = {name: lambda *args, name=name, **kw: calls.append(name) for name in functions}
+2026-10-23T00:04:59.3121054Z         ns.update(__name__="__main__", os=os)
+2026-10-23T00:04:59.3121780Z >       exec(compile(ast.Module(body=[main], type_ignores=[]), "serving_gate_entrypoint", "exec"), ns)  # noqa: S102 - actual entrypoint, all numerical functions mocked
+2026-10-23T00:04:59.3122520Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-23T00:04:59.3122866Z 
+2026-10-23T00:04:59.3123161Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:448: 
+2026-10-23T00:04:59.3123927Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+2026-10-23T00:04:59.3124342Z 
+2026-10-23T00:04:59.3124558Z >   ???
+2026-10-23T00:04:59.3124903Z E   NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3125195Z 
+2026-10-23T00:04:59.3125420Z serving_gate_entrypoint:948: NameError
+2026-10-23T00:04:59.3125913Z _ test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[cublas] _
+2026-10-23T00:04:59.3126333Z 
+2026-10-23T00:04:59.3126645Z monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f26c3f4f690>
+2026-10-23T00:04:59.3127116Z setting = 'cublas'
+2026-10-23T00:04:59.3127358Z 
+2026-10-23T00:04:59.3127643Z     @pytest.mark.parametrize("setting", [None, "cublas", "triton"])
+2026-10-23T00:04:59.3128268Z     def test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks(monkeypatch, setting):
+2026-10-23T00:04:59.3128816Z         if setting is None:
+2026-10-23T00:04:59.3129351Z             monkeypatch.delenv("SGLANG_DECODE_GATE_GEMM", raising=False)
+2026-10-23T00:04:59.3129786Z         else:
+2026-10-23T00:04:59.3130151Z             monkeypatch.setenv("SGLANG_DECODE_GATE_GEMM", setting)
+2026-10-23T00:04:59.3130678Z         source = ast.parse((ROOT / "scripts/check-firmus-decode-kernels.py").read_text())
+2026-10-23T00:04:59.3131550Z         main = next(node for node in source.body if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
+2026-10-23T00:04:59.3132305Z         calls = []
+2026-10-23T00:04:59.3132748Z         functions = {node.name for node in source.body if isinstance(node, ast.FunctionDef)}
+2026-10-23T00:04:59.3133353Z         ns = {name: lambda *args, name=name, **kw: calls.append(name) for name in functions}
+2026-10-23T00:04:59.3133841Z         ns.update(__name__="__main__", os=os)
+2026-10-23T00:04:59.3134512Z >       exec(compile(ast.Module(body=[main], type_ignores=[]), "serving_gate_entrypoint", "exec"), ns)  # noqa: S102 - actual entrypoint, all numerical functions mocked
+2026-10-23T00:04:59.3135213Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-23T00:04:59.3135562Z 
+2026-10-23T00:04:59.3135836Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:448: 
+2026-10-23T00:04:59.3136455Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+2026-10-23T00:04:59.3136821Z 
+2026-10-23T00:04:59.3137019Z >   ???
+2026-10-23T00:04:59.3137328Z E   NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3137615Z 
+2026-10-23T00:04:59.3138006Z serving_gate_entrypoint:948: NameError
+2026-10-23T00:04:59.3138490Z _ test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[triton] _
+2026-10-23T00:04:59.3138902Z 
+2026-10-23T00:04:59.3139314Z monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f26c41d0210>
+2026-10-23T00:04:59.3139775Z setting = 'triton'
+2026-10-23T00:04:59.3140007Z 
+2026-10-23T00:04:59.3140281Z     @pytest.mark.parametrize("setting", [None, "cublas", "triton"])
+2026-10-23T00:04:59.3140863Z     def test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks(monkeypatch, setting):
+2026-10-23T00:04:59.3141385Z         if setting is None:
+2026-10-23T00:04:59.3141783Z             monkeypatch.delenv("SGLANG_DECODE_GATE_GEMM", raising=False)
+2026-10-23T00:04:59.3142204Z         else:
+2026-10-23T00:04:59.3142557Z             monkeypatch.setenv("SGLANG_DECODE_GATE_GEMM", setting)
+2026-10-23T00:04:59.3143087Z         source = ast.parse((ROOT / "scripts/check-firmus-decode-kernels.py").read_text())
+2026-10-23T00:04:59.3143944Z         main = next(node for node in source.body if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
+2026-10-23T00:04:59.3144658Z         calls = []
+2026-10-23T00:04:59.3145078Z         functions = {node.name for node in source.body if isinstance(node, ast.FunctionDef)}
+2026-10-23T00:04:59.3145820Z         ns = {name: lambda *args, name=name, **kw: calls.append(name) for name in functions}
+2026-10-23T00:04:59.3146299Z         ns.update(__name__="__main__", os=os)
+2026-10-23T00:04:59.3146960Z >       exec(compile(ast.Module(body=[main], type_ignores=[]), "serving_gate_entrypoint", "exec"), ns)  # noqa: S102 - actual entrypoint, all numerical functions mocked
+2026-10-23T00:04:59.3147677Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-23T00:04:59.3148014Z 
+2026-10-23T00:04:59.3148290Z qwen-experiment-metrics/tests/test_firmus_decode_gate.py:448: 
+2026-10-23T00:04:59.3148759Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+2026-10-23T00:04:59.3149078Z 
+2026-10-23T00:04:59.3149389Z >   ???
+2026-10-23T00:04:59.3149819Z E   NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3150109Z 
+2026-10-23T00:04:59.3150323Z serving_gate_entrypoint:948: NameError
+2026-10-23T00:04:59.3150736Z =========================== short test summary info ============================
+2026-10-23T00:04:59.3151789Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_numeric_selection_check_requires_explicit_pass_and_saves_log[True] - assert False is (True is True)
+2026-10-23T00:04:59.3153033Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_numeric_selection_check_requires_explicit_pass_and_saves_log[False] - AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3168497Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_numeric_selection_check_requires_explicit_pass_and_saves_log[None] - AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3170006Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_numeric_selection_check_requires_explicit_pass_and_saves_log[exception] - AssertionError: assert 'numeric diagnostic' in ''
+2026-10-23T00:04:59.3171247Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[None] - NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3172454Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[cublas] - NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3173647Z FAILED qwen-experiment-metrics/tests/test_firmus_decode_gate.py::test_regular_serving_gate_skips_disabled_candidate_but_keeps_other_checks[triton] - NameError: name 'torch' is not defined
+2026-10-23T00:04:59.3859854Z ##[error]Process completed with exit code 1.
+2026-10-23T00:04:59.3958466Z Post job cleanup.
+2026-10-23T00:04:59.4690891Z [command]/usr/bin/git version
+2026-10-23T00:04:59.4766423Z git version 2.55.0
+2026-10-23T00:04:59.4870235Z Temporarily overriding HOME='/home/runner/work/_temp/c3515dc3-7253-4f4e-8e2b-394b7ee5e49a' before making global git config changes
+2026-10-23T00:04:59.4871095Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T00:04:59.4871744Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-10-23T00:04:59.4872843Z Removing SSH command configuration
+2026-10-23T00:04:59.4873283Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T00:04:59.4930182Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T00:04:59.5297051Z Removing HTTP extra header
+2026-10-23T00:04:59.5310135Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T00:04:59.5460578Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T00:04:59.5785358Z Removing includeIf entries pointing to credentials config files
+2026-10-23T00:04:59.5794032Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T00:04:59.5823438Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-10-23T00:04:59.5824084Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-10-23T00:04:59.5824584Z includeif.gitdir:/github/workspace/.git.path
+2026-10-23T00:04:59.5825046Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-23T00:04:59.5831012Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-10-23T00:04:59.5857219Z /home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:04:59.5867020Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-c92a9976\-85e0\-4ca9\-955d\-225387d517fb\.config
+2026-10-23T00:04:59.5913810Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-10-23T00:04:59.5940316Z /home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:04:59.5957633Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-c92a9976\-85e0\-4ca9\-955d\-225387d517fb\.config
+2026-10-23T00:04:59.5993007Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-23T00:04:59.6021322Z /github/runner_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:04:59.6027146Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-c92a9976\-85e0\-4ca9\-955d\-225387d517fb\.config
+2026-10-23T00:04:59.6061074Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-23T00:04:59.6085696Z /github/runner_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config
+2026-10-23T00:04:59.6091536Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-c92a9976\-85e0\-4ca9\-955d\-225387d517fb\.config
+2026-10-23T00:04:59.6128808Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T00:04:59.6387787Z Removing credentials config '/home/runner/work/_temp/git-credentials-c92a9976-85e0-4ca9-955d-225387d517fb.config'
+2026-10-23T00:04:59.6550362Z Cleaning up orphan processes
+
+===== 制御処理を検証 _ gigatoken CPU互換性/system.txt =====
+2026-10-23T00:02:09.2830000Z Evaluating validate.if
+2026-10-23T00:02:09.2830000Z Evaluating: success()
+2026-10-23T00:02:09.2830000Z Result: true
+2026-10-23T00:02:09.2830000Z Evaluating validate.gigatoken.if
+2026-10-23T00:02:09.2830000Z Evaluating: success()
+2026-10-23T00:02:09.2830000Z Result: true
+2026-10-23T00:02:09.3440000Z Requested labels: ubuntu-latest
+2026-10-23T00:02:09.3440000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:09.3440000Z Reusable workflow chain:
+2026-10-23T00:02:09.3440000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:09.3440000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:09.3440000Z Waiting for a runner to pick up this job...
+2026-10-23T00:02:09.6610000Z Job is waiting for a hosted runner to come online.
+2026-10-23T00:02:09.6620000Z Job is about to start running on the hosted runner: GitHub Actions 1000001826
+===== 制御処理を検証 _ validate/system.txt =====
+2026-10-23T00:02:09.2810000Z Evaluating validate.if
+2026-10-23T00:02:09.2810000Z Evaluating: success()
+2026-10-23T00:02:09.2810000Z Result: true
+2026-10-23T00:02:09.2810000Z Evaluating validate.validate.if
+2026-10-23T00:02:09.2810000Z Evaluating: success()
+2026-10-23T00:02:09.2810000Z Result: true
+2026-10-23T00:02:09.2830000Z Requested labels: ubuntu-latest
+2026-10-23T00:02:09.2830000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023
+2026-10-23T00:02:09.2830000Z Reusable workflow chain:
+2026-10-23T00:02:09.2830000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:09.2830000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/perf/firmus-decode-r2-20261023 (37a3c8c977a9c635bbd6df5b42bf91e9eb7f9d21)
+2026-10-23T00:02:09.2830000Z Waiting for a runner to pick up this job...
+2026-10-23T00:02:09.6590000Z Job is waiting for a hosted runner to come online.
+2026-10-23T00:02:09.6610000Z Job is about to start running on the hosted runner: GitHub Actions 1000001825

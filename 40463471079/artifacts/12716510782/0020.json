@@ -1,0 +1,36 @@
+{
+  "commit": "d78916edbc29208f2d3c86002357a412ba673296",
+  "kernel": "Prefill QKV exact paired rounding",
+  "scope": "one GPU, no serving",
+  "sglang_overlays": {
+    "patches/sglang/add-rmsnorm-group-quant.patch": "0ea92882f7ba4d1804eeb54fe81d8d610796fa890c61c3039922bd49d28bf40c",
+    "patches/sglang/prefill-attention-contiguous-kv.patch": "d58039ee0149e433e39f3ab13f8be7775cfb4861dd770fd8211304feff027e1e",
+    "patches/sglang/megamoe-prefill-replicas.patch": "6f2b64cdc4f05ea31af7be60c313d5365646885afef73a3d2ce3f3a8e9846ea4",
+    "patches/sglang/verify-attention-candidates.patch": "bc4a3a2a6aa786e19dc57cb489c742f4e47e27d357dbe33b7cc6df83e89f829e",
+    "patches/sglang/decode-verify-scheduler-metadata.patch": "5a86b227fea9225109999d48505efd510dae0f34b93d2bedb9fedbf8e6a8c652",
+    "patches/sglang/decode-fusions.patch": "d779e4e864e65554ea527bfd0a2c200bcd154c83ae48aaf8427b1ff22f650574",
+    "patches/sglang/decode-dense-gemm.patch": "a5049b688615a8e89c1790ce4b3d190a396db33e1182bb4dcde38ebc1235111e",
+    "patches/sglang/decode-fa3-verify.patch": "e5623b0cd28cfa81e897a1847a602f418acd500112f4b24d858b95dceda4cfa8",
+    "patches/sglang/decode-routing-capture.patch": "a9c26d49a24feb1b989759ce8d07949a6d3c874c999c83bb50d6006b8f98d8a9",
+    "patches/sglang/prefill-fp8-integration.patch": "99e97664d83610c539eaa62e992a396f4d5bb1981760934ca3df3bb5c3de42ef",
+    "patches/sglang/prefill-qkv-fast-fp8.patch": "11bb55ee3fc86db2c4b84254033105863d0db333919e4d771b26a04612d043a6",
+    "patches/sglang/decode-qknorm-fast-fp8.patch": "e08c44f43ceded413c1652a02c9f65fcb41d9eaafc068c749cb1d5786dd0ad10",
+    "patches/sglang/decode-add-rmsnorm-group-quant.patch": "71375901315fc74fe13551fc8de985e1617d56f438d5deb3b091c1be5817b03a",
+    "patches/sglang/prefill-async-admission.patch": "3291c98dbb54cedc3b2e758c9e25caeea60c719ab4b9327d1caf9d83d484ee3b"
+  },
+  "sources": {
+    "prefill-memory.py": "f7ae33c5e8b19e2fd366cbe8321ce314223d3f9315301a06faaaed8a7a4fb117",
+    "prefill-paired-round.py": "dbf04c40fe3e46d03ecbf654aa88e7512938ccf6606605cf86d202d550e1e165",
+    "probe": "475622923fc487c397c87bc8f33477ba06dc92ec63fc2ba57343cc76d931a465",
+    "rope-control.cuh": "d84e6077018f58ab5df42087f5c6a00c75b40e621362b1037eb4da56a65c7c35",
+    "prepare-prefill-memory.sh": "11a2c4530f3528a4996aa540213653389fbb2be28372ec2ae55a0d12cf296fec",
+    "firmus-framework.json": "d9156f2518c6010053f70d4f2bb0af3ee36b9bf310474ea1244182d0c59b888c"
+  },
+  "cluster": "firmus",
+  "benchmark": "kernels/probes/prepare-prefill-memory.sh",
+  "image": "/scratch/home/ACCOUNT/qwen/containers/40197369083.sqsh",
+  "cuda": "13.0",
+  "cxx": "/usr/bin/g++",
+  "allocated_gpus": 8,
+  "probe_gpus": 1
+}

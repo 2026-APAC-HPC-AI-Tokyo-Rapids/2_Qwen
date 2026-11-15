@@ -1,0 +1,169 @@
+
+===== 0_inspect.txt =====
+﻿2026-10-15T18:43:44.9523691Z Current runner version: '2.336.0'
+2026-10-15T18:43:44.9532343Z Runner name: 'home-lab-867ee4eca023'
+2026-10-15T18:43:44.9533535Z Runner group name: 'default'
+2026-10-15T18:43:44.9534853Z Machine name: '867ee4eca023'
+2026-10-15T18:43:44.9539348Z ##[group]GITHUB_TOKEN Permissions
+2026-10-15T18:43:44.9542397Z Contents: read
+2026-10-15T18:43:44.9543269Z Metadata: read
+2026-10-15T18:43:44.9544217Z ##[endgroup]
+2026-10-15T18:43:44.9547352Z Secret source: Actions
+2026-10-15T18:43:44.9548919Z Cache mode: write
+2026-10-15T18:43:44.9550149Z Prepare workflow directory
+2026-10-15T18:43:44.9990775Z Prepare all required actions
+2026-10-15T18:43:45.0110626Z Complete job name: inspect
+2026-10-15T18:43:45.1043137Z ##[group]Run set -euo pipefail
+2026-10-15T18:43:45.1044041Z [36;1mset -euo pipefail[0m
+2026-10-15T18:43:45.1045160Z [36;1mroot=/scratch/users/industry/ai-hpc/ACCOUNT/sglang-runs/pd-38786485817-1.rANF8zYBSb[0m
+2026-10-15T18:43:45.1047241Z [36;1mif [[ ! -f "${root}/source/provenance.json" ]]; then echo 'Runtime already removed; consult the completed archive'; exit 0; fi[0m
+2026-10-15T18:43:45.1049568Z [36;1mjq -e '.cluster == "aspire2ap" and .commit == "e11bbaa7d33df13a00050dd3cb3c0cac4c57ad9e"' "${root}/source/provenance.json"[0m
+2026-10-15T18:43:45.1051073Z [36;1mdate -u +%FT%TZ[0m
+2026-10-15T18:43:45.1054909Z [36;1mif [[ -s "${root}/logs/pbs-accounting.txt" ]]; then job_id=$(awk '/^Job Id:/ {print $3}' "${root}/logs/pbs-accounting.txt"); [[ "${job_id}" =~ ^[0-9]+[.][A-Za-z0-9.-]+$ ]]; /opt/pbs/bin/qstat -x -f -F json "${job_id}" | jq '.Jobs | to_entries[] | {job_id: .key, state: .value.job_state, queue: .value.queue, started: .value.stime, hosts: .value.exec_host, used: (.value.resources_used | del(.gpu_usage)), comment: .value.comment, exit_status: .value.Exit_status}'; fi[0m
+2026-10-15T18:43:45.1059624Z [36;1mfor path in "${root}/logs/"*.log; do if [[ -s "${path}" ]]; then printf '\nlog=%s\n' "${path##*/}"; tail -n 12 "${path}" | cut -c 1-1500; fi; done[0m
+2026-10-15T18:43:45.1061451Z [36;1mif [[ -s "${root}/results/score.json" ]]; then cat "${root}/results/score.json"; fi[0m
+2026-10-15T18:43:45.1075789Z shell: /opt/actions-runner-shells/aspire2p-shell --github-shell {0}
+2026-10-15T18:43:45.1077205Z ##[endgroup]
+2026-10-15T18:43:49.6926381Z true
+2026-10-15T18:43:49.6940471Z 2026-10-15T18:43:49Z
+2026-10-15T18:43:49.7163299Z {
+2026-10-15T18:43:49.7164399Z   "job_id": "220539.pbs111",
+2026-10-15T18:43:49.7165620Z   "state": "R",
+2026-10-15T18:43:49.7166737Z   "queue": "aiq2",
+2026-10-15T18:43:49.7168260Z   "started": "Fri Oct 16 02:37:30 2026",
+2026-10-15T18:43:49.7169626Z   "hosts": "a2ap-dgx004/0*112+a2ap-dgx030/0*112",
+2026-10-15T18:43:49.7170873Z   "used": {
+2026-10-15T18:43:49.7171819Z     "cpupercent": 792,
+2026-10-15T18:43:49.7172822Z     "cput": "00:49:03",
+2026-10-15T18:43:49.7173853Z     "mem": "149045916kb",
+2026-10-15T18:43:49.7174883Z     "ncpus": 224,
+2026-10-15T18:43:49.7175830Z     "ngpus": 0,
+2026-10-15T18:43:49.7177318Z     "vmem": "4139818452kb",
+2026-10-15T18:43:49.7178771Z     "walltime": "00:06:09"
+2026-10-15T18:43:49.7180066Z   },
+2026-10-15T18:43:49.7183118Z   "comment": "Job run at Fri Oct 16 at 02:37 on (a2ap-dgx004:ncpus=112:ngpus=8:mem=1971322880kb)+(a2ap-dgx030:ncpus=112:ngpus=8:mem=1971322880kb)",
+2026-10-15T18:43:49.7187195Z   "exit_status": null
+2026-10-15T18:43:49.7189125Z }
+2026-10-15T18:43:49.7190187Z 
+2026-10-15T18:43:49.7190848Z log=decode-0.log
+2026-10-15T18:43:49.7299674Z [2026-10-16 02:42:41] INFO:     127.0.0.1:54356 - "POST /generate HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7303463Z [2026-10-16 02:42:41] Disaggregation warmup requests completed for all 4 DP ranks
+2026-10-15T18:43:49.7306812Z [2026-10-16 02:42:41] End of disaggregation warmup
+2026-10-15T18:43:49.7309767Z [2026-10-16 02:42:41] The server is fired up and ready to roll!
+2026-10-15T18:43:49.7312757Z [2026-10-16 02:42:47] INFO:     192.0.2.6:35028 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7316779Z [2026-10-16 02:42:55] INFO:     192.0.2.6:35036 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7321631Z [2026-10-16 02:43:03] INFO:     192.0.2.6:58298 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7324985Z [2026-10-16 02:43:11] INFO:     192.0.2.6:46950 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7328314Z [2026-10-16 02:43:20] INFO:     192.0.2.6:47250 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7331622Z [2026-10-16 02:43:28] INFO:     192.0.2.6:53296 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7334678Z [2026-10-16 02:43:36] INFO:     192.0.2.6:53308 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7338010Z [2026-10-16 02:43:44] INFO:     192.0.2.6:47486 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.7341009Z 
+2026-10-15T18:43:49.7341774Z log=decode-1.log
+2026-10-15T18:43:49.7408978Z 2026-10-16 02:43:46 NIXL INFO    _api.py:281 Initialized NIXL agent: 6fdf25f7-f2b9-4071-ba10-6622f5ebcc21
+2026-10-15T18:43:49.7411115Z 2026-10-16 02:43:46 NIXL INFO    _api.py:281 Initialized NIXL agent: 6167fa69-9763-4be5-9998-3b969b64cfef
+2026-10-15T18:43:49.7412736Z 2026-10-16 02:43:46 NIXL INFO    _api.py:281 Initialized NIXL agent: 19a00c78-c05d-44a2-8b06-8081a182a55b
+2026-10-15T18:43:49.7414278Z 2026-10-16 02:43:46 NIXL INFO    _api.py:281 Initialized NIXL agent: 4eb3f9a3-47df-4db8-bac6-eba8e52181a0
+2026-10-15T18:43:49.7415577Z 2026-10-16 02:43:48 NIXL INFO    _api.py:405 Backend UCX was instantiated
+2026-10-15T18:43:49.7416675Z [2026-10-16 02:43:48 DP0 TP0 EP0] NIXL KVManager initialized with backend: UCX
+2026-10-15T18:43:49.7418007Z 2026-10-16 02:43:48 NIXL INFO    _api.py:405 Backend UCX was instantiated
+2026-10-15T18:43:49.7419092Z [2026-10-16 02:43:48 DP1 TP1 EP1] NIXL KVManager initialized with backend: UCX
+2026-10-15T18:43:49.7420210Z 2026-10-16 02:43:48 NIXL INFO    _api.py:405 Backend UCX was instantiated
+2026-10-15T18:43:49.7421264Z 2026-10-16 02:43:48 NIXL INFO    _api.py:405 Backend UCX was instantiated
+2026-10-15T18:43:49.7422277Z [2026-10-16 02:43:48 DP3 TP3 EP3] NIXL KVManager initialized with backend: UCX
+2026-10-15T18:43:49.7423459Z [2026-10-16 02:43:48 DP2 TP2 EP2] NIXL KVManager initialized with backend: UCX
+2026-10-15T18:43:49.7424201Z 
+2026-10-15T18:43:49.7424526Z log=driver.log
+2026-10-15T18:43:49.7425757Z pd_driver_started=2026-10-15T18:37:31Z host=a2ap-dgx004
+2026-10-15T18:43:49.7426413Z 
+2026-10-15T18:43:49.7427176Z log=node-0-environment.log
+2026-10-15T18:43:49.7427803Z hostname=a2ap-dgx004
+2026-10-15T18:43:49.7428196Z node_ip=192.0.2.7
+2026-10-15T18:43:49.7428796Z node_rank=0
+2026-10-15T18:43:49.7429961Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:43:49.7431421Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-483856bd-a57a-9145-7766-446ecf74ea51)
+2026-10-15T18:43:49.7432579Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-fb9e0401-be7e-de19-37ea-2cf68b113d09)
+2026-10-15T18:43:49.7433679Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-6e2e3517-05a2-f29a-0fbf-671c2c770349)
+2026-10-15T18:43:49.7434878Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-db9f2e12-ea10-d0b5-2ec1-d7957835124c)
+2026-10-15T18:43:49.7436094Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-6c60c08c-6607-14d7-5a88-d6626ba0fe16)
+2026-10-15T18:43:49.7437342Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-d498f7bc-ca57-8469-c1ed-dfb0827d0de6)
+2026-10-15T18:43:49.7438531Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c7f72f5e-d4e0-4290-8619-af2d47bc62eb)
+2026-10-15T18:43:49.7439553Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-8669eaa6-45c0-5f64-b43c-3fca1f0ba907)
+2026-10-15T18:43:49.7440296Z 
+2026-10-15T18:43:49.7440555Z log=node-0-model-copy.log
+2026-10-15T18:43:49.7471714Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:43:49.7472988Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:43:49.7473833Z host=a2ap-dgx004
+2026-10-15T18:43:49.7475123Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:43:49.7478105Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147069632 2193450357620      14% /scratch
+2026-10-15T18:43:49.7479970Z /dev/md1                                                                                                                                                                         ext4     29884363448    456428168   27927677796       2% /raid
+2026-10-15T18:43:49.7480905Z copy_start=2026-10-16T02:37:32,086690112+08:00
+2026-10-15T18:43:49.7481651Z copy_seconds=167
+2026-10-15T18:43:49.7482049Z copy_end=2026-10-16T02:40:19,528949298+08:00
+2026-10-15T18:43:49.7482806Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-0.ZAp6TMI68b/model
+2026-10-15T18:43:49.7483452Z copy_verified=true
+2026-10-15T18:43:49.7483667Z 
+2026-10-15T18:43:49.7483833Z log=node-1-environment.log
+2026-10-15T18:43:49.7484237Z hostname=a2ap-dgx030
+2026-10-15T18:43:49.7484592Z node_ip=192.0.2.4
+2026-10-15T18:43:49.7484937Z node_rank=1
+2026-10-15T18:43:49.7485623Z ucx_net_devices=mlx5_0:1,mlx5_1:1,mlx5_10:1,mlx5_11:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+2026-10-15T18:43:49.7486588Z GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-3262688e-3b06-2f57-aa25-4449f88d6ac9)
+2026-10-15T18:43:49.7487511Z GPU 1: NVIDIA H100 80GB HBM3 (UUID: GPU-3712af80-a0de-2012-91ad-ec184cc15a0a)
+2026-10-15T18:43:49.7488426Z GPU 2: NVIDIA H100 80GB HBM3 (UUID: GPU-52de63d1-3209-fe76-765f-dc3fa253bcc4)
+2026-10-15T18:43:49.7489330Z GPU 3: NVIDIA H100 80GB HBM3 (UUID: GPU-43310372-cbe5-78ce-b3ce-2f3ddbba2696)
+2026-10-15T18:43:49.7490112Z GPU 4: NVIDIA H100 80GB HBM3 (UUID: GPU-15d861f3-7719-4481-2f83-8589f314deea)
+2026-10-15T18:43:49.7490936Z GPU 5: NVIDIA H100 80GB HBM3 (UUID: GPU-63ad4bd1-5318-43e9-29b5-d993683e79da)
+2026-10-15T18:43:49.7492141Z GPU 6: NVIDIA H100 80GB HBM3 (UUID: GPU-c69a0c8a-18ed-1732-ebd3-034234f21462)
+2026-10-15T18:43:49.7493300Z GPU 7: NVIDIA H100 80GB HBM3 (UUID: GPU-f67cf417-8ebb-4bf0-562e-cef892bd436b)
+2026-10-15T18:43:49.9436574Z 
+2026-10-15T18:43:49.9438114Z log=node-1-model-copy.log
+2026-10-15T18:43:49.9440419Z source=/scratch/users/industry/ai-hpc/ACCOUNT/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+2026-10-15T18:43:49.9442753Z destination=/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:43:49.9444691Z host=a2ap-dgx030
+2026-10-15T18:43:49.9446114Z Filesystem                                                                                                                                                                       Type     1024-blocks         Used     Available Capacity Mounted on
+2026-10-15T18:43:49.9448762Z 100.127.255.111@o2ib,100.127.255.112@o2ib:100.127.255.113@o2ib,100.127.255.114@o2ib:100.127.255.115@o2ib,100.127.255.116@o2ib:100.127.255.117@o2ib,100.127.255.118@o2ib:/scratch lustre 2562533954880 343147600064 2193449826980      14% /scratch
+2026-10-15T18:43:49.9451122Z /dev/md1                                                                                                                                                                         ext4     29884363448    180277924   28203828040       1% /raid
+2026-10-15T18:43:49.9452835Z copy_start=2026-10-16T02:37:32,157549429+08:00
+2026-10-15T18:43:49.9453601Z copy_seconds=168
+2026-10-15T18:43:49.9454041Z copy_end=2026-10-16T02:40:20,173644709+08:00
+2026-10-15T18:43:49.9455150Z 236449103211	/raid/pbs.220539.pbs111/qwen-submission-node-1.gHD7NX9GcP/model
+2026-10-15T18:43:49.9456245Z copy_verified=true
+2026-10-15T18:43:49.9456604Z 
+2026-10-15T18:43:49.9456923Z log=prefill-0.log
+2026-10-15T18:43:49.9457992Z [2026-10-16 02:43:01] INFO:     192.0.2.6:39262 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9460956Z [2026-10-16 02:43:09 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9464436Z [2026-10-16 02:43:09] INFO:     192.0.2.6:37170 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9467286Z [2026-10-16 02:43:17 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9469385Z [2026-10-16 02:43:17] INFO:     192.0.2.6:45266 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9739839Z [2026-10-16 02:43:25 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9742174Z [2026-10-16 02:43:26] INFO:     192.0.2.6:45270 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9747139Z [2026-10-16 02:43:33 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.95
+2026-10-15T18:43:49.9752926Z [2026-10-16 02:43:34] INFO:     192.0.2.6:43422 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9759907Z [2026-10-16 02:43:41 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.98
+2026-10-15T18:43:49.9766060Z [2026-10-16 02:43:42] INFO:     192.0.2.6:33216 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9772208Z [2026-10-16 02:43:49 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.95
+2026-10-15T18:43:49.9775546Z 
+2026-10-15T18:43:49.9775890Z log=prefill-1.log
+2026-10-15T18:43:49.9778706Z [2026-10-16 02:43:02 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9781720Z [2026-10-16 02:43:02] INFO:     192.0.2.6:44670 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9785218Z [2026-10-16 02:43:10 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9788464Z [2026-10-16 02:43:10] INFO:     192.0.2.6:40452 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9791551Z [2026-10-16 02:43:18 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9794458Z [2026-10-16 02:43:18] INFO:     192.0.2.6:51074 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9796752Z [2026-10-16 02:43:26 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9798902Z [2026-10-16 02:43:27] INFO:     192.0.2.6:51080 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9800734Z [2026-10-16 02:43:34 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9803134Z [2026-10-16 02:43:35] INFO:     192.0.2.6:51956 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:49.9805300Z [2026-10-16 02:43:42 DP0 TP0 EP0] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, #bootstrap-req: 0, #inflight-req: 1, #optimistic-req: 0, cuda graph: False, input throughput (token/s): 7.96
+2026-10-15T18:43:49.9807747Z [2026-10-16 02:43:43] INFO:     192.0.2.6:34094 - "GET /health HTTP/1.1" 200 OK
+2026-10-15T18:43:52.2980201Z Cleaning up orphan processes
+
+===== inspect/system.txt =====
+2026-10-15T18:43:41.0320000Z Evaluating inspect.if
+2026-10-15T18:43:41.0320000Z Evaluating: success()
+2026-10-15T18:43:41.0320000Z Result: true
+2026-10-15T18:43:41.0370000Z Requested labels: self-hosted, home-lab
+2026-10-15T18:43:41.0370000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aspire-run-status.yml@refs/heads/perf/aspire-megamoe-port
+2026-10-15T18:43:41.0370000Z Waiting for a runner to pick up this job...
+2026-10-15T18:43:41.3000000Z Job is about to start running on the runner: home-lab-867ee4eca023

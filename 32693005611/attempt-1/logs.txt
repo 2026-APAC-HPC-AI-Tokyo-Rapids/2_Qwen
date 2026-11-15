@@ -1,0 +1,1983 @@
+
+===== 0_玄界 _ GPUノードでEnroot check_envを実行.txt =====
+﻿2026-08-24T05:24:45.5666568Z Current runner version: '2.336.0'
+2026-08-24T05:24:45.5685572Z Runner name: 'genkai0001-3'
+2026-08-24T05:24:45.5686458Z Runner group name: 'default'
+2026-08-24T05:24:45.5687800Z Machine name: 'genkai0001'
+2026-08-24T05:24:45.5692961Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:24:45.5695805Z Actions: read
+2026-08-24T05:24:45.5696444Z Contents: read
+2026-08-24T05:24:45.5697090Z Metadata: read
+2026-08-24T05:24:45.5697651Z ##[endgroup]
+2026-08-24T05:24:45.5700334Z Secret source: Actions
+2026-08-24T05:24:45.5701730Z Prepare workflow directory
+2026-08-24T05:24:45.8900619Z Prepare all required actions
+2026-08-24T05:24:45.8958277Z Getting action download info
+2026-08-24T05:24:46.9106012Z Download action repository 'actions/upload-artifact@v7' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-08-24T05:24:47.9938894Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:24:47.9945251Z ##[group] Inputs
+2026-08-24T05:24:47.9946725Z   node_count: 1
+2026-08-24T05:24:47.9948512Z   container_sha256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:24:47.9950656Z   container_size: 12718911488
+2026-08-24T05:24:47.9952068Z ##[endgroup]
+2026-08-24T05:24:47.9953427Z Complete job name: 玄界 / GPUノードでEnroot check_envを実行
+2026-08-24T05:24:54.2447614Z ##[group]Run cd "${RUNTIME_DIR}"
+2026-08-24T05:24:54.2448241Z [36;1mcd "${RUNTIME_DIR}"[0m
+2026-08-24T05:24:54.2448572Z [36;1mjob_environment="RUNTIME_DIR=${RUNTIME_DIR}"[0m
+2026-08-24T05:24:54.2449309Z [36;1msubmission="$(pjsub -L "node=1" --mpi "proc=1" -x "${job_environment}" -o "${RUNTIME_DIR}/logs/%j.log" -j -N qwen_check_env "${RUNTIME_DIR}/scripts/check-qwen-container.pjm")"[0m
+2026-08-24T05:24:54.2449975Z [36;1mprintf '%s\n' "${submission}"[0m
+2026-08-24T05:24:54.2450379Z [36;1mjob_id="$(sed -n 's/.*Job \([0-9][0-9]*\) submitted.*/\1/p' <<<"${submission}")"[0m
+2026-08-24T05:24:54.2450755Z [36;1mtest -n "${job_id}"[0m
+2026-08-24T05:24:54.2451136Z [36;1mprintf 'PJM_JOB_ID=%s\n' "${job_id}" >>"${GITHUB_ENV}"[0m
+2026-08-24T05:24:54.2451552Z [36;1mprintf 'job_id=%s\n' "${job_id}" >>"${GITHUB_OUTPUT}"[0m
+2026-08-24T05:24:54.2468776Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:24:54.2469499Z env:
+2026-08-24T05:24:54.2469840Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:24:54.2470248Z   RUNTIME_DIR: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys
+2026-08-24T05:24:54.2470633Z ##[endgroup]
+2026-08-24T05:24:55.8402211Z [INFO] PJM 0000 pjsub Job 6575431 submitted.
+2026-08-24T05:24:55.8935044Z ##[group]Run while [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then printf '%s\n' "${wait_status}"; exit 1; fi; sleep 2; done
+2026-08-24T05:24:55.8936674Z [36;1mwhile [[ ! -e "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log" ]]; do wait_status="$(pjwait -w waitnone "${PJM_JOB_ID}")"; pjm_code="$(awk 'NR == 1 {print $2}' <<<"${wait_status}")"; if [[ -n "${pjm_code}" && "${pjm_code}" != X ]]; then printf '%s\n' "${wait_status}"; exit 1; fi; sleep 2; done[0m
+2026-08-24T05:24:55.8949771Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:24:55.8950082Z env:
+2026-08-24T05:24:55.8950379Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:24:55.8950870Z   RUNTIME_DIR: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys
+2026-08-24T05:24:55.8951383Z   PJM_JOB_ID: 6575431
+2026-08-24T05:24:55.8951700Z ##[endgroup]
+2026-08-24T05:32:09.0072876Z ##[group]Run pjwait -z "${PJM_JOB_ID}"
+2026-08-24T05:32:09.0073322Z [36;1mpjwait -z "${PJM_JOB_ID}"[0m
+2026-08-24T05:32:09.0073632Z [36;1mcat "${RUNTIME_DIR}/logs/${PJM_JOB_ID}.log"[0m
+2026-08-24T05:32:09.0073967Z [36;1mpjwait "${PJM_JOB_ID}"[0m
+2026-08-24T05:32:09.0074255Z [36;1mtest -e "${RUNTIME_DIR}/run-success"[0m
+2026-08-24T05:32:09.0086924Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:32:09.0239030Z env:
+2026-08-24T05:32:09.0239315Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:32:09.0239755Z   RUNTIME_DIR: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys
+2026-08-24T05:32:09.0240170Z   PJM_JOB_ID: 6575431
+2026-08-24T05:32:09.0240431Z ##[endgroup]
+2026-08-24T05:32:43.4726078Z /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys/enroot-system/hooks.d/10-shadow.sh: 70 行:   456 終了 1                yes 2> /dev/null
+2026-08-24T05:32:43.4728600Z        457 Segmentation fault      | pwck -R "${ENROOT_ROOTFS}" "${pwddb#${ENROOT_ROOTFS}}" /etc/shadow > /dev/null 2>&1
+2026-08-24T05:32:43.4730392Z Python: 3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]
+2026-08-24T05:32:43.4731282Z CUDA available: True
+2026-08-24T05:32:43.4731835Z GPU 0,1,2,3: NVIDIA H100
+2026-08-24T05:32:43.4732422Z GPU 0,1,2,3 Compute Capability: 9.0
+2026-08-24T05:32:43.4733020Z CUDA_HOME: /usr/local/cuda
+2026-08-24T05:32:43.4733968Z NVCC: Cuda compilation tools, release 13.0, V13.0.88
+2026-08-24T05:32:43.4734758Z CUDA Driver Version: 595.71.05
+2026-08-24T05:32:43.4735379Z PyTorch: 2.11.0+cu130
+2026-08-24T05:32:43.4735991Z sglang: 0.0.0.dev0
+2026-08-24T05:32:43.4736470Z sglang-kernel: 0.4.5
+2026-08-24T05:32:43.4737314Z flashinfer_python: 0.6.15.post1
+2026-08-24T05:32:43.4738212Z flashinfer_cubin: 0.6.15.post1
+2026-08-24T05:32:43.4738794Z flashinfer_jit_cache: 0.6.15.post1+cu130
+2026-08-24T05:32:43.4739446Z triton: 3.6.0
+2026-08-24T05:32:43.4740115Z transformers: 5.12.1
+2026-08-24T05:32:43.4740738Z torchao: 0.17.0
+2026-08-24T05:32:43.4741301Z numpy: 2.3.5
+2026-08-24T05:32:43.4741859Z aiohttp: 3.14.3
+2026-08-24T05:32:43.4742411Z fastapi: 0.141.1
+2026-08-24T05:32:43.4743053Z huggingface_hub: 1.28.0
+2026-08-24T05:32:43.4743590Z interegular: 0.3.3
+2026-08-24T05:32:43.4744204Z modelscope: 1.39.1
+2026-08-24T05:32:43.4744700Z orjson: 3.12.0
+2026-08-24T05:32:43.4745178Z outlines: 0.1.11
+2026-08-24T05:32:43.4745995Z packaging: 26.3
+2026-08-24T05:32:43.4746608Z psutil: 7.2.2
+2026-08-24T05:32:43.4747076Z pydantic: 2.13.4
+2026-08-24T05:32:43.4747759Z python-multipart: 0.0.32
+2026-08-24T05:32:43.4748448Z pyzmq: 27.2.0
+2026-08-24T05:32:43.4749015Z uvicorn: 0.52.4
+2026-08-24T05:32:43.4749555Z uvloop: 0.22.1
+2026-08-24T05:32:43.4750112Z vllm: Module Not Found
+2026-08-24T05:32:43.4750448Z xgrammar: 0.2.1
+2026-08-24T05:32:43.4750720Z openai: 2.6.1
+2026-08-24T05:32:43.4750980Z tiktoken: 0.14.0
+2026-08-24T05:32:43.4751284Z anthropic: 1.0.0
+2026-08-24T05:32:43.4751549Z litellm: Module Not Found
+2026-08-24T05:32:43.4751837Z torchcodec: 0.11.1
+2026-08-24T05:32:43.4752105Z NVIDIA Topology: 
+2026-08-24T05:32:43.4752566Z 	[4mGPU0	GPU1	GPU2	GPU3	NIC0	NIC1	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+2026-08-24T05:32:43.4753014Z GPU0	 X 	NV6	NV6	NV6	SYS	SYS	0-29	0		N/A
+2026-08-24T05:32:43.4753383Z GPU1	NV6	 X 	NV6	NV6	PIX	SYS	30-59	1		N/A
+2026-08-24T05:32:43.4753732Z GPU2	NV6	NV6	 X 	NV6	SYS	NODE	90-119	3		N/A
+2026-08-24T05:32:43.4754083Z GPU3	NV6	NV6	NV6	 X 	SYS	PIX	90-119	3		N/A
+2026-08-24T05:32:43.4754417Z NIC0	SYS	PIX	SYS	SYS	 X 	SYS				
+2026-08-24T05:32:43.4754742Z NIC1	SYS	SYS	NODE	PIX	SYS	 X 				
+2026-08-24T05:32:43.4754920Z 
+2026-08-24T05:32:43.4755051Z Legend:
+2026-08-24T05:32:43.4755180Z 
+2026-08-24T05:32:43.4755294Z   X    = Self
+2026-08-24T05:32:43.4755772Z   SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+2026-08-24T05:32:43.4756484Z   NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+2026-08-24T05:32:43.4761313Z   PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+2026-08-24T05:32:43.4762010Z   PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+2026-08-24T05:32:43.4762564Z   PIX  = Connection traversing at most a single PCIe bridge
+2026-08-24T05:32:43.4763005Z   NV#  = Connection traversing a bonded set of # NVLinks
+2026-08-24T05:32:43.4763238Z 
+2026-08-24T05:32:43.4763353Z NIC Legend:
+2026-08-24T05:32:43.4763491Z 
+2026-08-24T05:32:43.4764039Z   NIC0: mlx5_0
+2026-08-24T05:32:43.4764290Z   NIC1: mlx5_1
+2026-08-24T05:32:43.4764428Z 
+2026-08-24T05:32:43.4764434Z 
+2026-08-24T05:32:43.4764562Z ulimit soft: 1048576
+2026-08-24T05:32:43.5969634Z 6575431 0 0 0
+2026-08-24T05:32:43.6276683Z ##[group]Run actions/upload-artifact@v7
+2026-08-24T05:32:43.6277145Z with:
+2026-08-24T05:32:43.6277418Z   name: qwen-genkai-check-env-32693005611-1
+2026-08-24T05:32:43.6278342Z   path: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys/logs
+/fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys/source
+/fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys/run-success
+
+2026-08-24T05:32:43.6279168Z   if-no-files-found: error
+2026-08-24T05:32:43.6279441Z   compression-level: 6
+2026-08-24T05:32:43.6279688Z   overwrite: false
+2026-08-24T05:32:43.6279930Z   include-hidden-files: false
+2026-08-24T05:32:43.6280187Z   archive: true
+2026-08-24T05:32:43.6280399Z env:
+2026-08-24T05:32:43.6280632Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:32:43.6281169Z   RUNTIME_DIR: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys
+2026-08-24T05:32:43.6281575Z   PJM_JOB_ID: 6575431
+2026-08-24T05:32:43.6281812Z ##[endgroup]
+2026-08-24T05:32:46.2990020Z Multiple search paths detected. Calculating the least common ancestor of all paths
+2026-08-24T05:32:46.2992278Z The least common ancestor is /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys. This will be the root directory of the artifact
+2026-08-24T05:32:46.2993049Z With the provided path, there will be 6 files uploaded
+2026-08-24T05:32:46.2996216Z Artifact name is valid!
+2026-08-24T05:32:46.2996774Z Root directory input is valid!
+2026-08-24T05:32:47.0898449Z Uploading artifact: qwen-genkai-check-env-32693005611-1.zip
+2026-08-24T05:32:49.9480689Z Beginning upload of artifact content to blob storage
+2026-08-24T05:32:50.9358186Z Uploaded bytes 4004
+2026-08-24T05:32:51.1167448Z Finished uploading artifact content to blob storage!
+2026-08-24T05:32:51.1168156Z SHA256 digest of uploaded artifact is a9c002a4c4d64857be20e916d179e36ed693e664a95109ab89881b0ed1a0c5d4
+2026-08-24T05:32:51.1168769Z Finalizing artifact upload
+2026-08-24T05:32:51.8460502Z Artifact qwen-genkai-check-env-32693005611-1 successfully finalized. Artifact ID 9508171283
+2026-08-24T05:32:51.8461603Z Artifact qwen-genkai-check-env-32693005611-1 has been successfully uploaded! Final size is 4004 bytes. Artifact ID is 9508171283
+2026-08-24T05:32:51.8476709Z Artifact download URL: https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/32693005611#artifacts
+2026-08-24T05:32:51.9107876Z ##[group]Run if [[ -n "${PJM_JOB_ID:-}" ]]; then pjdel "${PJM_JOB_ID}" 2>/dev/null || true; pjwait -z "${PJM_JOB_ID}" 2>/dev/null || true; fi; rm -rf -- "${RUNTIME_DIR:?}"
+2026-08-24T05:32:51.9108837Z [36;1mif [[ -n "${PJM_JOB_ID:-}" ]]; then pjdel "${PJM_JOB_ID}" 2>/dev/null || true; pjwait -z "${PJM_JOB_ID}" 2>/dev/null || true; fi; rm -rf -- "${RUNTIME_DIR:?}"[0m
+2026-08-24T05:32:51.9121366Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:32:51.9121703Z env:
+2026-08-24T05:32:51.9121948Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:32:51.9122360Z   RUNTIME_DIR: /fast/PROJECT/sglang-runs/check-env-32693005611-1.LsCDyzarys
+2026-08-24T05:32:51.9122757Z   PJM_JOB_ID: 6575431
+2026-08-24T05:32:51.9122985Z ##[endgroup]
+2026-08-24T05:32:53.3492486Z Cleaning up orphan processes
+
+===== 11_AWSでSquashFSを準備 _ 再利用するローカル成果物を確定.txt =====
+﻿2026-08-24T05:22:20.4799665Z Current runner version: '2.336.0'
+2026-08-24T05:22:20.4838440Z ##[group]Runner Image Provisioner
+2026-08-24T05:22:20.4840099Z Hosted Compute Agent
+2026-08-24T05:22:20.4841140Z Version: 20260729.566
+2026-08-24T05:22:20.4842321Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-24T05:22:20.4843949Z Build Date: 2026-07-29T19:17:02Z
+2026-08-24T05:22:20.4845185Z Worker ID: {bdaf3741-3f45-46f5-a7de-ca4018a39629}
+2026-08-24T05:22:20.4846588Z Azure Region: westus2
+2026-08-24T05:22:20.4847553Z ##[endgroup]
+2026-08-24T05:22:20.4849885Z ##[group]Operating System
+2026-08-24T05:22:20.4850945Z Ubuntu
+2026-08-24T05:22:20.4851858Z 24.04.4
+2026-08-24T05:22:20.4852907Z LTS
+2026-08-24T05:22:20.4854173Z ##[endgroup]
+2026-08-24T05:22:20.4855670Z ##[group]Runner Image
+2026-08-24T05:22:20.4856787Z Image: ubuntu-24.04
+2026-08-24T05:22:20.4857795Z Version: 20260816.277.1
+2026-08-24T05:22:20.4859985Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260816.277/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-24T05:22:20.4862740Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260816.277
+2026-08-24T05:22:20.4864727Z ##[endgroup]
+2026-08-24T05:22:20.4866949Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:22:20.4870062Z Actions: read
+2026-08-24T05:22:20.4871106Z Contents: read
+2026-08-24T05:22:20.4872249Z Metadata: read
+2026-08-24T05:22:20.4873742Z ##[endgroup]
+2026-08-24T05:22:20.4877073Z Secret source: Actions
+2026-08-24T05:22:20.4878974Z Prepare workflow directory
+2026-08-24T05:22:20.5748478Z Prepare all required actions
+2026-08-24T05:22:20.5886038Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:20.5893974Z ##[group] Inputs
+2026-08-24T05:22:20.5895875Z   require_build: false
+2026-08-24T05:22:20.5896986Z ##[endgroup]
+2026-08-24T05:22:20.5898120Z Complete job name: AWSでSquashFSを準備 / 再利用するローカル成果物を確定
+2026-08-24T05:22:21.2744292Z ##[group]Run candidate="$(jq -cn --argjson genkai "${GENKAI_CANDIDATES:-[]}" --argjson aspire "${ASPIRE_CANDIDATES:-[]}" --argjson firmus "${FIRMUS_CANDIDATES:-[]}" '[$genkai[] as $candidate | select(any($aspire[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | select(any($firmus[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | $candidate][0] // empty')"
+2026-08-24T05:22:21.2749251Z [36;1mcandidate="$(jq -cn --argjson genkai "${GENKAI_CANDIDATES:-[]}" --argjson aspire "${ASPIRE_CANDIDATES:-[]}" --argjson firmus "${FIRMUS_CANDIDATES:-[]}" '[$genkai[] as $candidate | select(any($aspire[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | select(any($firmus[]; .run_id == $candidate.run_id and .sha256 == $candidate.sha256 and .size == $candidate.size)) | $candidate][0] // empty')"[0m
+2026-08-24T05:22:21.2753924Z [36;1mif [[ -n "${candidate}" ]]; then printf 'action=reuse\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' "$(jq -r '.run_id' <<<"${candidate}")" "$(jq -r '.sha256' <<<"${candidate}")" "$(jq -r '.size' <<<"${candidate}")" >>"${GITHUB_OUTPUT}"; else printf 'action=build\nsource_run_id=\ncontainer_sha256=\ncontainer_size=\n' >>"${GITHUB_OUTPUT}"; fi[0m
+2026-08-24T05:22:21.3474623Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:22:21.3475958Z env:
+2026-08-24T05:22:21.3476532Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:21.3477535Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:21.3479070Z   ASPIRE_CANDIDATES: [{"run_id":"32689409893","sha256":"4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0","size":"12718911488"}]
+2026-08-24T05:22:21.3480985Z   FIRMUS_CANDIDATES: [{"run_id":"32689409893","sha256":"4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0","size":"12718911488"}]
+2026-08-24T05:22:21.3484066Z   GENKAI_CANDIDATES: [{"run_id":"32691561818","sha256":"4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0","size":"12718911488"},{"run_id":"32689409893","sha256":"4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0","size":"12718911488"}]
+2026-08-24T05:22:21.3486312Z ##[endgroup]
+2026-08-24T05:22:21.4085764Z Evaluate and set job outputs
+2026-08-24T05:22:21.4094058Z Set output 'action'
+2026-08-24T05:22:21.4096429Z Set output 'container_sha256'
+2026-08-24T05:22:21.4097722Z Set output 'container_size'
+2026-08-24T05:22:21.4098524Z Set output 'source_run_id'
+2026-08-24T05:22:21.4099747Z Cleaning up orphan processes
+
+===== 12_AWSでSquashFSを準備 _ 玄界のローカル成果物を選択.txt =====
+﻿2026-08-24T05:18:08.8921580Z Current runner version: '2.336.0'
+2026-08-24T05:18:08.8937635Z Runner name: 'genkai0002-4'
+2026-08-24T05:18:08.8938549Z Runner group name: 'default'
+2026-08-24T05:18:08.8939692Z Machine name: 'genkai0002'
+2026-08-24T05:18:08.8944596Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:18:08.8947938Z Actions: read
+2026-08-24T05:18:08.8948575Z Contents: read
+2026-08-24T05:18:08.8949250Z Metadata: read
+2026-08-24T05:18:08.8949843Z ##[endgroup]
+2026-08-24T05:18:08.8952354Z Secret source: Actions
+2026-08-24T05:18:08.8953424Z Prepare workflow directory
+2026-08-24T05:18:09.2003211Z Prepare all required actions
+2026-08-24T05:18:09.2056740Z Getting action download info
+2026-08-24T05:18:10.2149864Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:18:11.9399790Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:11.9404483Z ##[group] Inputs
+2026-08-24T05:18:11.9405379Z   require_build: false
+2026-08-24T05:18:11.9405920Z ##[endgroup]
+2026-08-24T05:18:11.9406452Z Complete job name: AWSでSquashFSを準備 / 玄界のローカル成果物を選択
+2026-08-24T05:18:17.6459008Z ##[group]Run actions/checkout@v7
+2026-08-24T05:18:17.6459912Z with:
+2026-08-24T05:18:17.6460189Z   fetch-depth: 0
+2026-08-24T05:18:17.6460457Z   persist-credentials: false
+2026-08-24T05:18:17.6460787Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:17.6463527Z   token: ***
+2026-08-24T05:18:17.6463756Z   ssh-strict: true
+2026-08-24T05:18:17.6463987Z   ssh-user: git
+2026-08-24T05:18:17.6464232Z   clean: true
+2026-08-24T05:18:17.6464505Z   sparse-checkout-cone-mode: true
+2026-08-24T05:18:17.6464784Z   fetch-tags: false
+2026-08-24T05:18:17.6465017Z   show-progress: true
+2026-08-24T05:18:17.6465248Z   lfs: false
+2026-08-24T05:18:17.6465551Z   submodules: false
+2026-08-24T05:18:17.6465790Z   set-safe-directory: true
+2026-08-24T05:18:17.6466072Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:18:17.6466584Z env:
+2026-08-24T05:18:17.6466859Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:17.6467328Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:17.6467753Z ##[endgroup]
+2026-08-24T05:18:20.3607397Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:20.3609037Z ##[group]Getting Git version info
+2026-08-24T05:18:20.3609602Z Working directory is '/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:20.3643554Z [command]/usr/bin/git version
+2026-08-24T05:18:20.3725319Z git version 2.43.7
+2026-08-24T05:18:20.3759670Z ##[endgroup]
+2026-08-24T05:18:20.3779752Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:18:20.3830397Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/04f2d398-5db6-411b-9ba5-7b6a8da29505' before making global git config changes
+2026-08-24T05:18:20.3831320Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:18:20.3834491Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:20.3933001Z Deleting the contents of '/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:20.3948619Z ##[group]Determining repository object format
+2026-08-24T05:18:20.3950084Z ##[endgroup]
+2026-08-24T05:18:20.3950562Z ##[group]Initializing the repository
+2026-08-24T05:18:20.3954256Z [command]/usr/bin/git init /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:20.5496891Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:18:20.5497584Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-24T05:18:20.5498137Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-24T05:18:20.5664876Z hint: 
+2026-08-24T05:18:20.5665300Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:18:20.5665782Z hint: 
+2026-08-24T05:18:20.5666159Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:18:20.5666703Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:18:20.5667100Z hint: 
+2026-08-24T05:18:20.5667362Z hint: 	git branch -m <name>
+2026-08-24T05:18:20.5752207Z Initialized empty Git repository in /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:18:20.5765131Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:20.5888759Z ##[endgroup]
+2026-08-24T05:18:20.5889256Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:18:20.5894768Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:18:20.6090396Z ##[endgroup]
+2026-08-24T05:18:20.6090994Z ##[group]Setting up auth
+2026-08-24T05:18:20.6091526Z Removing SSH command configuration
+2026-08-24T05:18:20.6231506Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:20.6233217Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:20.7051444Z Removing HTTP extra header
+2026-08-24T05:18:20.7080413Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:20.7288497Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:20.7893295Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:20.7898594Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:20.7971338Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:20.8546855Z [command]/usr/bin/git config --file /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:18:20.8768340Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git.path /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:20.8841391Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:20.8918988Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:20.8994286Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:20.9071925Z ##[endgroup]
+2026-08-24T05:18:20.9072384Z ##[group]Fetching the repository
+2026-08-24T05:18:20.9081383Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+2026-08-24T05:18:22.0156789Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:22.0157546Z  * [new branch]      agent/genkai-build-and-pjwait -> origin/agent/genkai-build-and-pjwait
+2026-08-24T05:18:22.0244094Z  * [new branch]      agent/verify-pjm-lifecycle -> origin/agent/verify-pjm-lifecycle
+2026-08-24T05:18:22.0283568Z  * [new branch]      codex/sglang-qwen35-experiments -> origin/codex/sglang-qwen35-experiments
+2026-08-24T05:18:22.0308515Z  * [new branch]      issue-7-oci-enroot -> origin/issue-7-oci-enroot
+2026-08-24T05:18:22.0515507Z  * [new branch]      main               -> origin/main
+2026-08-24T05:18:22.0619543Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:18:22.0776735Z   origin/main
+2026-08-24T05:18:22.0789815Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:18:22.0859916Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:22.0863548Z ##[endgroup]
+2026-08-24T05:18:22.0864059Z ##[group]Determining the checkout info
+2026-08-24T05:18:22.0864898Z ##[endgroup]
+2026-08-24T05:18:22.0869002Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:18:22.1022139Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:18:22.1114133Z ##[group]Checking out the ref
+2026-08-24T05:18:22.1118259Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:18:22.7626014Z Switched to a new branch 'main'
+2026-08-24T05:18:22.7643763Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:18:22.7655945Z ##[endgroup]
+2026-08-24T05:18:22.7792089Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:18:22.7886759Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:22.7907214Z ##[group]Removing auth
+2026-08-24T05:18:22.7907586Z Removing SSH command configuration
+2026-08-24T05:18:22.7910207Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:22.7982862Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:22.8567561Z Removing HTTP extra header
+2026-08-24T05:18:22.8570892Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:22.8635539Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:22.9394766Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:22.9398241Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:22.9466716Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:22.9467508Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:22.9468091Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:22.9468501Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:22.9476508Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:22.9536485Z /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:22.9546303Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git.path \/home\/PROJECT\/share\/actions\-runners\/genkai0002\-4\/_work\/_temp\/git\-credentials\-32201786\-3d9f\-4537\-a021\-7bd28c5df6b8\.config
+2026-08-24T05:18:22.9634447Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:22.9687390Z /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:22.9695581Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/PROJECT\/share\/actions\-runners\/genkai0002\-4\/_work\/_temp\/git\-credentials\-32201786\-3d9f\-4537\-a021\-7bd28c5df6b8\.config
+2026-08-24T05:18:22.9776846Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:22.9833705Z /github/runner_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:22.9840390Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-32201786\-3d9f\-4537\-a021\-7bd28c5df6b8\.config
+2026-08-24T05:18:22.9917324Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:22.9972283Z /github/runner_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config
+2026-08-24T05:18:22.9979049Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-32201786\-3d9f\-4537\-a021\-7bd28c5df6b8\.config
+2026-08-24T05:18:23.0070531Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:23.0647731Z Removing credentials config '/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/git-credentials-32201786-3d9f-4537-a021-7bd28c5df6b8.config'
+2026-08-24T05:18:23.0658192Z ##[endgroup]
+2026-08-24T05:18:23.2046777Z ##[group]Run scripts/select-qwen-container.sh
+2026-08-24T05:18:23.2047321Z [36;1mscripts/select-qwen-container.sh[0m
+2026-08-24T05:18:23.2064070Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:18:23.2064411Z env:
+2026-08-24T05:18:23.2064648Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:23.2065045Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:23.2065638Z   CONTAINER_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-containers
+2026-08-24T05:18:23.2068308Z   GH_TOKEN: ***
+2026-08-24T05:18:23.2068541Z   REQUIRE_BUILD: false
+2026-08-24T05:18:23.2068781Z ##[endgroup]
+2026-08-24T05:20:58.7580585Z Post job cleanup.
+2026-08-24T05:20:58.8586411Z [command]/usr/bin/git version
+2026-08-24T05:20:58.8634314Z git version 2.43.7
+2026-08-24T05:20:58.8664852Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:20:58.8741215Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0002-4/_work/_temp/bd4d221a-1404-45ff-ad4e-8e5eed895c72' before making global git config changes
+2026-08-24T05:20:58.8742679Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:20:58.8757490Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0002-4/_work/2_Qwen/2_Qwen
+2026-08-24T05:20:58.8855288Z Removing SSH command configuration
+2026-08-24T05:20:58.8860912Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:20:58.8933463Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:20:58.9514953Z Removing HTTP extra header
+2026-08-24T05:20:58.9517811Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:20:58.9595873Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:20:59.0146828Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:20:59.0154229Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:20:59.0216096Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:20:59.1123071Z Evaluate and set job outputs
+2026-08-24T05:20:59.1133534Z Set output 'action'
+2026-08-24T05:20:59.1136736Z Set output 'candidates'
+2026-08-24T05:20:59.1137857Z Set output 'container_sha256'
+2026-08-24T05:20:59.1138401Z Set output 'container_size'
+2026-08-24T05:20:59.1138965Z Set output 'source_run_id'
+2026-08-24T05:20:59.1139825Z Cleaning up orphan processes
+
+===== 13_AWSでSquashFSを準備 _ Firmusのローカル成果物を選択.txt =====
+﻿2026-08-24T05:18:07.1592608Z Current runner version: '2.336.0'
+2026-08-24T05:18:07.1606149Z Runner name: 'firmus-login-6'
+2026-08-24T05:18:07.1606849Z Runner group name: 'default'
+2026-08-24T05:18:07.1607619Z Machine name: 'login'
+2026-08-24T05:18:07.1611217Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:18:07.1613195Z Actions: read
+2026-08-24T05:18:07.1613679Z Contents: read
+2026-08-24T05:18:07.1614127Z Metadata: read
+2026-08-24T05:18:07.1614661Z ##[endgroup]
+2026-08-24T05:18:07.1616430Z Secret source: Actions
+2026-08-24T05:18:07.1617304Z Prepare workflow directory
+2026-08-24T05:18:07.2091209Z Prepare all required actions
+2026-08-24T05:18:07.2126689Z Getting action download info
+2026-08-24T05:18:08.0386851Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:18:17.7927470Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:17.7930359Z ##[group] Inputs
+2026-08-24T05:18:17.7930887Z   require_build: false
+2026-08-24T05:18:17.7931136Z ##[endgroup]
+2026-08-24T05:18:17.7931440Z Complete job name: AWSでSquashFSを準備 / Firmusのローカル成果物を選択
+2026-08-24T05:18:17.8717036Z ##[group]Run actions/checkout@v7
+2026-08-24T05:18:17.8717642Z with:
+2026-08-24T05:18:17.8717873Z   fetch-depth: 0
+2026-08-24T05:18:17.8718102Z   persist-credentials: false
+2026-08-24T05:18:17.8718379Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:17.8720186Z   token: ***
+2026-08-24T05:18:17.8720410Z   ssh-strict: true
+2026-08-24T05:18:17.8720634Z   ssh-user: git
+2026-08-24T05:18:17.8720848Z   clean: true
+2026-08-24T05:18:17.8721083Z   sparse-checkout-cone-mode: true
+2026-08-24T05:18:17.8721343Z   fetch-tags: false
+2026-08-24T05:18:17.8721549Z   show-progress: true
+2026-08-24T05:18:17.8721760Z   lfs: false
+2026-08-24T05:18:17.8721959Z   submodules: false
+2026-08-24T05:18:17.8722178Z   set-safe-directory: true
+2026-08-24T05:18:17.8722421Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:18:17.8722788Z env:
+2026-08-24T05:18:17.8723053Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:17.8723417Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:17.8723766Z ##[endgroup]
+2026-08-24T05:18:18.0858712Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:18.0859855Z ##[group]Getting Git version info
+2026-08-24T05:18:18.0860289Z Working directory is '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:18.0860918Z [command]/usr/bin/git version
+2026-08-24T05:18:18.0861194Z git version 2.52.0
+2026-08-24T05:18:18.0863436Z ##[endgroup]
+2026-08-24T05:18:18.0874624Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:18:18.0906627Z Temporarily overriding HOME='/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/4e76f075-88a9-4981-828b-d5b637b6a39c' before making global git config changes
+2026-08-24T05:18:18.0907435Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:18:18.0909480Z [command]/usr/bin/git config --global --add safe.directory /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:18.1016481Z Deleting the contents of '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:18.1028894Z ##[group]Determining repository object format
+2026-08-24T05:18:18.1029474Z ##[endgroup]
+2026-08-24T05:18:18.1029879Z ##[group]Initializing the repository
+2026-08-24T05:18:18.1032410Z [command]/usr/bin/git init /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:18.1431272Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:18:18.1431817Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-24T05:18:18.1432247Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-24T05:18:18.1432730Z hint: call:
+2026-08-24T05:18:18.1432938Z hint:
+2026-08-24T05:18:18.1433258Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:18:18.1433551Z hint:
+2026-08-24T05:18:18.1433833Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:18:18.1434349Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:18:18.1434704Z hint:
+2026-08-24T05:18:18.1434935Z hint: 	git branch -m <name>
+2026-08-24T05:18:18.1435171Z hint:
+2026-08-24T05:18:18.1435470Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-24T05:18:18.1462810Z Initialized empty Git repository in /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:18:18.1468671Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:18.1639446Z ##[endgroup]
+2026-08-24T05:18:18.1640037Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:18:18.1640476Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:18:18.1732736Z ##[endgroup]
+2026-08-24T05:18:18.1733098Z ##[group]Setting up auth
+2026-08-24T05:18:18.1733394Z Removing SSH command configuration
+2026-08-24T05:18:18.1738113Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:18.1830969Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:18.2451793Z Removing HTTP extra header
+2026-08-24T05:18:18.2455006Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:18.2547415Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:18.3159178Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:18.3161574Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:18.3263587Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:18.3912640Z [command]/usr/bin/git config --file /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:18:18.4012601Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git.path /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:18.4106914Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:18.4221288Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:18.4331430Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:18.4433235Z ##[endgroup]
+2026-08-24T05:18:18.4433645Z ##[group]Fetching the repository
+2026-08-24T05:18:18.4439377Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+2026-08-24T05:18:28.8596370Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:28.8597352Z  * [new branch]      agent/genkai-build-and-pjwait -> origin/agent/genkai-build-and-pjwait
+2026-08-24T05:18:28.8598013Z  * [new branch]      agent/verify-pjm-lifecycle -> origin/agent/verify-pjm-lifecycle
+2026-08-24T05:18:28.8598561Z  * [new branch]      codex/sglang-qwen35-experiments -> origin/codex/sglang-qwen35-experiments
+2026-08-24T05:18:28.8599056Z  * [new branch]      issue-7-oci-enroot -> origin/issue-7-oci-enroot
+2026-08-24T05:18:28.8599438Z  * [new branch]      main               -> origin/main
+2026-08-24T05:18:28.8915886Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:18:28.9086856Z   origin/main
+2026-08-24T05:18:28.9091616Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:18:28.9187775Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:28.9191191Z ##[endgroup]
+2026-08-24T05:18:28.9191660Z ##[group]Determining the checkout info
+2026-08-24T05:18:28.9192067Z ##[endgroup]
+2026-08-24T05:18:28.9193686Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:18:28.9492306Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:18:28.9618296Z ##[group]Checking out the ref
+2026-08-24T05:18:28.9618851Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:18:29.1473331Z Switched to a new branch 'main'
+2026-08-24T05:18:29.1556939Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:18:29.1563641Z ##[endgroup]
+2026-08-24T05:18:29.1758975Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:18:29.1916950Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:29.1936080Z ##[group]Removing auth
+2026-08-24T05:18:29.1936325Z Removing SSH command configuration
+2026-08-24T05:18:29.1939101Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:29.2062431Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:29.2796154Z Removing HTTP extra header
+2026-08-24T05:18:29.2798633Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:29.2917865Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:29.3633186Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:29.3635900Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:29.3741851Z includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:29.3742531Z includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:29.3742981Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:29.3743296Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:29.3748740Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:29.3857276Z /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:29.3865222Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git.path \/scratch\/home\/ACCOUNT\/actions\-runner\/runners\/firmus\-login\-6\/_work\/_temp\/git\-credentials\-72bb4e87\-64e0\-40c6\-bae2\-ecc56dc0e17c\.config
+2026-08-24T05:18:29.3971227Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:29.4062803Z /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:29.4069202Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/home\/ACCOUNT\/actions\-runner\/runners\/firmus\-login\-6\/_work\/_temp\/git\-credentials\-72bb4e87\-64e0\-40c6\-bae2\-ecc56dc0e17c\.config
+2026-08-24T05:18:29.4165437Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:29.4254379Z /github/runner_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:29.4260714Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-72bb4e87\-64e0\-40c6\-bae2\-ecc56dc0e17c\.config
+2026-08-24T05:18:29.4362771Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:29.4449809Z /github/runner_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config
+2026-08-24T05:18:29.4455200Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-72bb4e87\-64e0\-40c6\-bae2\-ecc56dc0e17c\.config
+2026-08-24T05:18:29.4555489Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:29.5218173Z Removing credentials config '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/git-credentials-72bb4e87-64e0-40c6-bae2-ecc56dc0e17c.config'
+2026-08-24T05:18:29.5229586Z ##[endgroup]
+2026-08-24T05:18:29.5517163Z ##[group]Run scripts/select-qwen-container.sh
+2026-08-24T05:18:29.5517552Z [36;1mscripts/select-qwen-container.sh[0m
+2026-08-24T05:18:29.5539314Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:18:29.5539567Z env:
+2026-08-24T05:18:29.5539791Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:29.5540104Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:29.5540482Z   CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
+2026-08-24T05:18:29.5542374Z   GH_TOKEN: ***
+2026-08-24T05:18:29.5542584Z   REQUIRE_BUILD: false
+2026-08-24T05:18:29.5542781Z ##[endgroup]
+2026-08-24T05:22:00.3117105Z Post job cleanup.
+2026-08-24T05:22:00.4867867Z [command]/usr/bin/git version
+2026-08-24T05:22:00.4915560Z git version 2.52.0
+2026-08-24T05:22:00.4942906Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:22:00.4975625Z Temporarily overriding HOME='/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/_temp/cc6124c4-5cad-48b7-8927-d07c85547cbe' before making global git config changes
+2026-08-24T05:22:00.4976390Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:22:00.4986048Z [command]/usr/bin/git config --global --add safe.directory /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:00.5101349Z Removing SSH command configuration
+2026-08-24T05:22:00.5104585Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:00.5205929Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:00.5853774Z Removing HTTP extra header
+2026-08-24T05:22:00.5857612Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:00.5954060Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:00.6576831Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:00.6582569Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:00.6678180Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:00.7519895Z Evaluate and set job outputs
+2026-08-24T05:22:00.7527534Z Set output 'action'
+2026-08-24T05:22:00.7529390Z Set output 'candidates'
+2026-08-24T05:22:00.7530236Z Set output 'container_sha256'
+2026-08-24T05:22:00.7530736Z Set output 'container_size'
+2026-08-24T05:22:00.7531202Z Set output 'source_run_id'
+2026-08-24T05:22:00.7531939Z Cleaning up orphan processes
+
+===== 14_AWSでSquashFSを準備 _ ASPIRE 2A+のローカル成果物を選択.txt =====
+﻿2026-08-24T05:18:07.4806932Z Current runner version: '2.336.0'
+2026-08-24T05:18:07.4820578Z Runner name: 'a2ap-login01-5'
+2026-08-24T05:18:07.4821454Z Runner group name: 'default'
+2026-08-24T05:18:07.4822378Z Machine name: 'a2ap-login01'
+2026-08-24T05:18:07.4827601Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:18:07.4829984Z Actions: read
+2026-08-24T05:18:07.4830603Z Contents: read
+2026-08-24T05:18:07.4831239Z Metadata: read
+2026-08-24T05:18:07.4831851Z ##[endgroup]
+2026-08-24T05:18:07.4834135Z Secret source: Actions
+2026-08-24T05:18:07.4835539Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTP requests.
+2026-08-24T05:18:07.4837552Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTPS requests.
+2026-08-24T05:18:07.4838574Z Prepare workflow directory
+2026-08-24T05:18:07.5426230Z Prepare all required actions
+2026-08-24T05:18:07.5474098Z Getting action download info
+2026-08-24T05:18:09.5160548Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:18:10.5374997Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:10.5378977Z ##[group] Inputs
+2026-08-24T05:18:10.5379798Z   require_build: false
+2026-08-24T05:18:10.5380283Z ##[endgroup]
+2026-08-24T05:18:10.5380823Z Complete job name: AWSでSquashFSを準備 / ASPIRE 2A+のローカル成果物を選択
+2026-08-24T05:18:10.8241701Z ##[group]Run actions/checkout@v7
+2026-08-24T05:18:10.8242560Z with:
+2026-08-24T05:18:10.8242885Z   fetch-depth: 0
+2026-08-24T05:18:10.8243216Z   persist-credentials: false
+2026-08-24T05:18:10.8243631Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:10.8246737Z   token: ***
+2026-08-24T05:18:10.8247039Z   ssh-strict: true
+2026-08-24T05:18:10.8247426Z   ssh-user: git
+2026-08-24T05:18:10.8247751Z   clean: true
+2026-08-24T05:18:10.8248097Z   sparse-checkout-cone-mode: true
+2026-08-24T05:18:10.8248446Z   fetch-tags: false
+2026-08-24T05:18:10.8248746Z   show-progress: true
+2026-08-24T05:18:10.8249089Z   lfs: false
+2026-08-24T05:18:10.8249366Z   submodules: false
+2026-08-24T05:18:10.8249678Z   set-safe-directory: true
+2026-08-24T05:18:10.8250015Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:18:10.8250560Z env:
+2026-08-24T05:18:10.8250867Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:10.8251415Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:10.8251911Z ##[endgroup]
+2026-08-24T05:18:11.8342653Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:11.8348000Z ##[group]Getting Git version info
+2026-08-24T05:18:11.8350679Z Working directory is '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:11.8354146Z [command]/usr/bin/git version
+2026-08-24T05:18:11.8385522Z git version 2.34.1
+2026-08-24T05:18:11.8460891Z ##[endgroup]
+2026-08-24T05:18:11.8490216Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:18:11.8545587Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/3e820619-4661-4edc-ac49-d3a77e9cbaf3' before making global git config changes
+2026-08-24T05:18:11.8551284Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:18:11.8558041Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:11.8665947Z Deleting the contents of '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen'
+2026-08-24T05:18:11.8689831Z ##[group]Determining repository object format
+2026-08-24T05:18:11.8691786Z ##[endgroup]
+2026-08-24T05:18:11.8693299Z ##[group]Initializing the repository
+2026-08-24T05:18:11.8696449Z [command]/usr/bin/git init /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen
+2026-08-24T05:18:11.8864120Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:18:11.8865782Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-24T05:18:11.8867592Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-24T05:18:11.8868778Z hint: 
+2026-08-24T05:18:11.8869830Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:18:11.8870861Z hint: 
+2026-08-24T05:18:11.8871932Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:18:11.8873539Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:18:11.8874708Z hint: 
+2026-08-24T05:18:11.8875531Z hint: 	git branch -m <name>
+2026-08-24T05:18:11.8969366Z Initialized empty Git repository in /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:18:11.8980866Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:11.9089061Z ##[endgroup]
+2026-08-24T05:18:11.9091223Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:18:11.9092980Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:18:11.9154530Z ##[endgroup]
+2026-08-24T05:18:11.9162385Z ##[group]Setting up auth
+2026-08-24T05:18:11.9164049Z Removing SSH command configuration
+2026-08-24T05:18:11.9166035Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:11.9218957Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:11.9662065Z Removing HTTP extra header
+2026-08-24T05:18:11.9666058Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:11.9717501Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:12.0168059Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:12.0171517Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:12.0236790Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:12.0655391Z [command]/usr/bin/git config --file /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:18:12.0752371Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:12.0834764Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:12.0903739Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:12.0971496Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:12.1037798Z ##[endgroup]
+2026-08-24T05:18:12.1039793Z ##[group]Fetching the repository
+2026-08-24T05:18:12.1045430Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+2026-08-24T05:18:13.1569806Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:18:13.1572274Z  * [new branch]      agent/genkai-build-and-pjwait -> origin/agent/genkai-build-and-pjwait
+2026-08-24T05:18:13.1594299Z  * [new branch]      agent/verify-pjm-lifecycle -> origin/agent/verify-pjm-lifecycle
+2026-08-24T05:18:13.1628508Z  * [new branch]      codex/sglang-qwen35-experiments -> origin/codex/sglang-qwen35-experiments
+2026-08-24T05:18:13.1650584Z  * [new branch]      issue-7-oci-enroot -> origin/issue-7-oci-enroot
+2026-08-24T05:18:13.1672065Z  * [new branch]      main               -> origin/main
+2026-08-24T05:18:13.1836502Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:18:13.1980159Z   origin/main
+2026-08-24T05:18:13.2000698Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:18:13.2062403Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:13.2070513Z ##[endgroup]
+2026-08-24T05:18:13.2072250Z ##[group]Determining the checkout info
+2026-08-24T05:18:13.2074021Z ##[endgroup]
+2026-08-24T05:18:13.2083620Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:18:13.2232119Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:18:13.2317384Z ##[group]Checking out the ref
+2026-08-24T05:18:13.2327280Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:18:13.3529726Z Switched to a new branch 'main'
+2026-08-24T05:18:13.3545852Z Branch 'main' set up to track remote branch 'main' from 'origin'.
+2026-08-24T05:18:13.3556943Z ##[endgroup]
+2026-08-24T05:18:13.3707561Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:18:13.3819106Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:18:13.3938332Z ##[group]Removing auth
+2026-08-24T05:18:13.3939553Z Removing SSH command configuration
+2026-08-24T05:18:13.3948378Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:18:13.4021741Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:18:13.4543816Z Removing HTTP extra header
+2026-08-24T05:18:13.4545934Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:18:13.4613499Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:18:13.5114937Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:18:13.5122777Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:18:13.5179167Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:13.5182572Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:13.5185052Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:13.5186631Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:13.5198324Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:18:13.5250771Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:13.5273179Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-5\/_work\/_temp\/git\-credentials\-b772dc74\-35db\-4887\-aad8\-07b3cbf54c62\.config
+2026-08-24T05:18:13.5361844Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:18:13.5416362Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:13.5434776Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-5\/_work\/_temp\/git\-credentials\-b772dc74\-35db\-4887\-aad8\-07b3cbf54c62\.config
+2026-08-24T05:18:13.5529042Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:18:13.5614538Z /github/runner_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:13.5633700Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-b772dc74\-35db\-4887\-aad8\-07b3cbf54c62\.config
+2026-08-24T05:18:13.5741272Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:18:13.5793671Z /github/runner_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config
+2026-08-24T05:18:13.5810251Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-b772dc74\-35db\-4887\-aad8\-07b3cbf54c62\.config
+2026-08-24T05:18:13.5892313Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:18:13.6370321Z Removing credentials config '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/git-credentials-b772dc74-35db-4887-aad8-07b3cbf54c62.config'
+2026-08-24T05:18:13.6392541Z ##[endgroup]
+2026-08-24T05:18:13.7225940Z ##[group]Run scripts/select-qwen-container.sh
+2026-08-24T05:18:13.7227821Z [36;1mscripts/select-qwen-container.sh[0m
+2026-08-24T05:18:13.7293972Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:18:13.7295299Z env:
+2026-08-24T05:18:13.7296310Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:18:13.7298191Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:18:13.7300389Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-24T05:18:13.7311009Z   GH_TOKEN: ***
+2026-08-24T05:18:13.7312032Z   REQUIRE_BUILD: false
+2026-08-24T05:18:13.7313083Z ##[endgroup]
+2026-08-24T05:21:17.9620213Z Post job cleanup.
+2026-08-24T05:21:18.0572924Z [command]/usr/bin/git version
+2026-08-24T05:21:18.0625296Z git version 2.34.1
+2026-08-24T05:21:18.0654410Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:21:18.0694145Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/_temp/e7387d01-d56f-4444-96df-701713a33a12' before making global git config changes
+2026-08-24T05:21:18.0697423Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:21:18.0700201Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-5/_work/2_Qwen/2_Qwen
+2026-08-24T05:21:18.0770050Z Removing SSH command configuration
+2026-08-24T05:21:18.0774958Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:21:18.0837663Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:21:18.1308082Z Removing HTTP extra header
+2026-08-24T05:21:18.1312487Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:21:18.1364147Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:21:18.1889087Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:21:18.1893654Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:21:18.1940436Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:21:18.2817765Z Evaluate and set job outputs
+2026-08-24T05:21:18.2840280Z Set output 'action'
+2026-08-24T05:21:18.2846505Z Set output 'candidates'
+2026-08-24T05:21:18.2848730Z Set output 'container_sha256'
+2026-08-24T05:21:18.2849998Z Set output 'container_size'
+2026-08-24T05:21:18.2851194Z Set output 'source_run_id'
+2026-08-24T05:21:18.2853092Z Cleaning up orphan processes
+
+===== 15_制御処理を検証 _ validate.txt =====
+﻿2026-08-24T05:17:45.0062121Z Current runner version: '2.336.0'
+2026-08-24T05:17:45.0098992Z ##[group]Runner Image Provisioner
+2026-08-24T05:17:45.0100453Z Hosted Compute Agent
+2026-08-24T05:17:45.0101398Z Version: 20260729.566
+2026-08-24T05:17:45.0102340Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-24T05:17:45.0103634Z Build Date: 2026-07-29T19:17:02Z
+2026-08-24T05:17:45.0104690Z Worker ID: {38c14ac2-b60a-47e3-baee-68572cb7bc24}
+2026-08-24T05:17:45.0105970Z Azure Region: eastus2
+2026-08-24T05:17:45.0106860Z ##[endgroup]
+2026-08-24T05:17:45.0110498Z ##[group]Operating System
+2026-08-24T05:17:45.0111510Z Ubuntu
+2026-08-24T05:17:45.0112297Z 24.04.4
+2026-08-24T05:17:45.0113221Z LTS
+2026-08-24T05:17:45.0114012Z ##[endgroup]
+2026-08-24T05:17:45.0114807Z ##[group]Runner Image
+2026-08-24T05:17:45.0115948Z Image: ubuntu-24.04
+2026-08-24T05:17:45.0116849Z Version: 20260816.277.1
+2026-08-24T05:17:45.0119400Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260816.277/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-24T05:17:45.0122411Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260816.277
+2026-08-24T05:17:45.0124105Z ##[endgroup]
+2026-08-24T05:17:45.0125825Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:17:45.0129001Z Contents: read
+2026-08-24T05:17:45.0129966Z Metadata: read
+2026-08-24T05:17:45.0130938Z ##[endgroup]
+2026-08-24T05:17:45.0134397Z Secret source: Actions
+2026-08-24T05:17:45.0136388Z Prepare workflow directory
+2026-08-24T05:17:45.0592485Z Prepare all required actions
+2026-08-24T05:17:45.0660708Z Getting action download info
+2026-08-24T05:17:45.3522662Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:17:45.4802362Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-08-24T05:17:45.8753661Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:17:45.8758792Z Complete job name: 制御処理を検証 / validate
+2026-08-24T05:17:45.9725615Z ##[group]Run actions/checkout@v7
+2026-08-24T05:17:45.9726433Z with:
+2026-08-24T05:17:45.9726942Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:17:45.9731777Z   token: ***
+2026-08-24T05:17:45.9732225Z   ssh-strict: true
+2026-08-24T05:17:45.9732668Z   ssh-user: git
+2026-08-24T05:17:45.9733113Z   persist-credentials: true
+2026-08-24T05:17:45.9733600Z   clean: true
+2026-08-24T05:17:45.9734046Z   sparse-checkout-cone-mode: true
+2026-08-24T05:17:45.9734571Z   fetch-depth: 1
+2026-08-24T05:17:45.9735075Z   fetch-tags: false
+2026-08-24T05:17:45.9735574Z   show-progress: true
+2026-08-24T05:17:45.9736033Z   lfs: false
+2026-08-24T05:17:45.9736509Z   submodules: false
+2026-08-24T05:17:45.9737026Z   set-safe-directory: true
+2026-08-24T05:17:45.9737787Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:17:45.9748225Z ##[endgroup]
+2026-08-24T05:17:46.1265197Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:17:46.1267759Z ##[group]Getting Git version info
+2026-08-24T05:17:46.1269180Z Working directory is '/home/runner/work/2_Qwen/2_Qwen'
+2026-08-24T05:17:46.1279164Z [command]/usr/bin/git version
+2026-08-24T05:17:46.1423258Z git version 2.55.0
+2026-08-24T05:17:46.1426623Z ##[endgroup]
+2026-08-24T05:17:46.1435577Z Temporarily overriding HOME='/home/runner/work/_temp/390907c4-dd6c-4bce-8825-9507a046e7ee' before making global git config changes
+2026-08-24T05:17:46.1438359Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:17:46.1448803Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-08-24T05:17:46.1515491Z Deleting the contents of '/home/runner/work/2_Qwen/2_Qwen'
+2026-08-24T05:17:46.1517358Z ##[group]Determining repository object format
+2026-08-24T05:17:46.1519272Z ##[endgroup]
+2026-08-24T05:17:46.1520524Z ##[group]Initializing the repository
+2026-08-24T05:17:46.1548965Z [command]/usr/bin/git init /home/runner/work/2_Qwen/2_Qwen
+2026-08-24T05:17:46.1649373Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:17:46.1668251Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-24T05:17:46.1669960Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-24T05:17:46.1672184Z hint: call:
+2026-08-24T05:17:46.1672956Z hint:
+2026-08-24T05:17:46.1673859Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:17:46.1674933Z hint:
+2026-08-24T05:17:46.1675948Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:17:46.1677644Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:17:46.1679872Z hint:
+2026-08-24T05:17:46.1692723Z hint: 	git branch -m <name>
+2026-08-24T05:17:46.1711143Z hint:
+2026-08-24T05:17:46.1712510Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-24T05:17:46.1714335Z Initialized empty Git repository in /home/runner/work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:17:46.1717479Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:17:46.1737664Z ##[endgroup]
+2026-08-24T05:17:46.1739693Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:17:46.1742100Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:17:46.1799206Z ##[endgroup]
+2026-08-24T05:17:46.1829298Z ##[group]Setting up auth
+2026-08-24T05:17:46.1859338Z Removing SSH command configuration
+2026-08-24T05:17:46.1869707Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:17:46.1894459Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:17:46.2474531Z Removing HTTP extra header
+2026-08-24T05:17:46.2476341Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:17:46.2493234Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:17:46.2739610Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:17:46.2741515Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:17:46.2829923Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:17:46.3071585Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:17:46.3117121Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path /home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:46.3157022Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:46.3200608Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:46.3243781Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:46.3280658Z ##[endgroup]
+2026-08-24T05:17:46.3282293Z ##[group]Fetching the repository
+2026-08-24T05:17:46.3288408Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67f79953c1610a7db516c0e893726d807ee8a912:refs/remotes/origin/main
+2026-08-24T05:17:46.6789283Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:17:46.6795612Z  * [new ref]         67f79953c1610a7db516c0e893726d807ee8a912 -> origin/main
+2026-08-24T05:17:46.6811689Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:17:46.6848831Z   origin/main
+2026-08-24T05:17:46.6879896Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:17:46.6915786Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:17:46.6945248Z ##[endgroup]
+2026-08-24T05:17:46.6947039Z ##[group]Determining the checkout info
+2026-08-24T05:17:46.6948946Z ##[endgroup]
+2026-08-24T05:17:46.6950018Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:17:46.7039096Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:17:46.7082786Z ##[group]Checking out the ref
+2026-08-24T05:17:46.7084598Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:17:46.7222431Z Switched to a new branch 'main'
+2026-08-24T05:17:46.7228997Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:17:46.7237672Z ##[endgroup]
+2026-08-24T05:17:46.7298644Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:17:46.7321797Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:17:46.7784652Z ##[group]Run astral-sh/setup-uv@v7
+2026-08-24T05:17:46.7785829Z with:
+2026-08-24T05:17:46.7786604Z   activate-environment: false
+2026-08-24T05:17:46.7788118Z   working-directory: /home/runner/work/2_Qwen/2_Qwen
+2026-08-24T05:17:46.7799945Z   github-token: ***
+2026-08-24T05:17:46.7800560Z   enable-cache: auto
+2026-08-24T05:17:46.7802386Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-08-24T05:17:46.7804473Z   restore-cache: true
+2026-08-24T05:17:46.7805038Z   save-cache: true
+2026-08-24T05:17:46.7805565Z   prune-cache: true
+2026-08-24T05:17:46.7806103Z   cache-python: false
+2026-08-24T05:17:46.7806714Z   ignore-nothing-to-cache: false
+2026-08-24T05:17:46.7807472Z   ignore-empty-workdir: false
+2026-08-24T05:17:46.7808505Z   add-problem-matchers: true
+2026-08-24T05:17:46.7809187Z   resolution-strategy: highest
+2026-08-24T05:17:46.7809836Z ##[endgroup]
+2026-08-24T05:17:47.0285477Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-08-24T05:17:47.0287004Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/uv.toml
+2026-08-24T05:17:47.0294152Z Trying to find version for uv in: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-08-24T05:17:47.0295574Z Could not find file: /home/runner/work/2_Qwen/2_Qwen/pyproject.toml
+2026-08-24T05:17:47.0296963Z Could not determine uv version from uv.toml or pyproject.toml. Falling back to latest.
+2026-08-24T05:17:47.0299799Z Fetching version data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-08-24T05:17:47.1666005Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.12.5/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-08-24T05:17:47.3966534Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/aa1e2096-9cc9-4f97-b466-3e20d915d561 -f /home/runner/work/_temp/fd693322-cd41-47ac-853b-a4635ccb7bc2
+2026-08-24T05:17:47.9702886Z Added /home/runner/.local/bin to the path
+2026-08-24T05:17:47.9703929Z Added /opt/hostedtoolcache/uv/0.12.5/x86_64 to the path
+2026-08-24T05:17:47.9704843Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:47.9705858Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-08-24T05:17:47.9732805Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:47.9733870Z Successfully installed uv version 0.12.5
+2026-08-24T05:17:48.0542572Z Searching files using cache dependency glob: /home/runner/work/2_Qwen/2_Qwen/**/*requirements*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*requirements*.in,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.txt,/home/runner/work/2_Qwen/2_Qwen/**/*constraints*.in,/home/runner/work/2_Qwen/2_Qwen/**/pyproject.toml,/home/runner/work/2_Qwen/2_Qwen/**/uv.lock,/home/runner/work/2_Qwen/2_Qwen/**/*.py.lock
+2026-08-24T05:17:48.0748783Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/pyproject.toml
+2026-08-24T05:17:48.0841318Z /home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics/uv.lock
+2026-08-24T05:17:48.0928436Z Found 2 files to hash.
+2026-08-24T05:17:48.1015474Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-24T05:17:48.1613644Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-24T05:17:48.3579464Z Received 3822782 of 3822782 (100.0%), 24.8 MBs/sec
+2026-08-24T05:17:48.3633011Z Cache Size: ~4 MB (3822782 B)
+2026-08-24T05:17:48.3634471Z [command]/usr/bin/tar -xf /home/runner/work/_temp/00000000-0000-0000-0000-000000000000/cache.tzst -P -C /home/runner/work/2_Qwen/2_Qwen --use-compress-program unzstd
+2026-08-24T05:17:48.3906195Z Cache restored successfully
+2026-08-24T05:17:48.3914254Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1
+2026-08-24T05:17:48.4601267Z ##[group]Run find scripts platforms containers aws -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' \) -print0 | xargs -0 -r -n1 bash -n
+2026-08-24T05:17:48.4602399Z [36;1mfind scripts platforms containers aws -type f \( -name '*.sh' -o -name '*.pjm' -o -name '*.pbs' -o -name '*.slurm' \) -print0 | xargs -0 -r -n1 bash -n[0m
+2026-08-24T05:17:48.4650538Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:48.4650832Z env:
+2026-08-24T05:17:48.4651137Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:48.4651565Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:48.4651892Z ##[endgroup]
+2026-08-24T05:17:48.5233137Z ##[group]Run uvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'
+2026-08-24T05:17:48.5234743Z [36;1muvx --from pyyaml python -c 'import pathlib, yaml; [yaml.safe_load(path.read_text()) for path in pathlib.Path(".github/workflows").glob("*.yml")]; [yaml.load(path.read_text(), Loader=yaml.BaseLoader) for path in pathlib.Path("aws").glob("*.yml")]'[0m
+2026-08-24T05:17:48.5275212Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:48.5275496Z env:
+2026-08-24T05:17:48.5275788Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:48.5276225Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:48.5276568Z ##[endgroup]
+2026-08-24T05:17:48.6909504Z Installed 1 package in 2ms
+2026-08-24T05:17:48.9259969Z ##[group]Run uvx --from 'actionlint-py==1.7.12.24' actionlint
+2026-08-24T05:17:48.9260471Z [36;1muvx --from 'actionlint-py==1.7.12.24' actionlint[0m
+2026-08-24T05:17:48.9304534Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:48.9304824Z env:
+2026-08-24T05:17:48.9305121Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:48.9305558Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:48.9305869Z ##[endgroup]
+2026-08-24T05:17:49.0330684Z Installed 1 package in 1ms
+2026-08-24T05:17:49.8187641Z ##[group]Run uvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml
+2026-08-24T05:17:49.8188711Z [36;1muvx --from 'cfn-lint>=1.38,<2' cfn-lint aws/qwen-build-infrastructure.yml[0m
+2026-08-24T05:17:49.8229824Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:49.8230113Z env:
+2026-08-24T05:17:49.8230413Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:49.8230815Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:49.8231126Z ##[endgroup]
+2026-08-24T05:17:49.9776918Z Downloading networkx (2.0MiB)
+2026-08-24T05:17:49.9779546Z Downloading sympy (6.0MiB)
+2026-08-24T05:17:49.9780020Z Downloading cfn-lint (4.9MiB)
+2026-08-24T05:17:50.2132874Z  Downloaded networkx
+2026-08-24T05:17:50.4759083Z  Downloaded sympy
+2026-08-24T05:17:50.6430799Z  Downloaded cfn-lint
+2026-08-24T05:17:50.7199478Z Installed 9 packages in 76ms
+2026-08-24T05:17:54.0475752Z ##[group]Run ! grep -RIn '\\$' scripts platforms containers aws .github/workflows
+2026-08-24T05:17:54.0476364Z [36;1m! grep -RIn '\\$' scripts platforms containers aws .github/workflows[0m
+2026-08-24T05:17:54.0516531Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:54.0516820Z env:
+2026-08-24T05:17:54.0517119Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:54.0517527Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:54.0518080Z ##[endgroup]
+2026-08-24T05:17:54.0630472Z ##[group]Run uv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts
+2026-08-24T05:17:54.0631149Z [36;1muv run --project qwen-experiment-metrics ruff check qwen-experiment-metrics scripts[0m
+2026-08-24T05:17:54.0666753Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:54.0667024Z env:
+2026-08-24T05:17:54.0667316Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:54.0667728Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:54.0668316Z ##[endgroup]
+2026-08-24T05:17:54.0828967Z Using CPython 3.12.3 interpreter at: /usr/bin/python3
+2026-08-24T05:17:54.0829796Z Creating virtual environment at: qwen-experiment-metrics/.venv
+2026-08-24T05:17:54.0886606Z    Building qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-08-24T05:17:54.1722734Z Downloading pygments (1.2MiB)
+2026-08-24T05:17:54.1723646Z Downloading ruff (10.9MiB)
+2026-08-24T05:17:54.4614759Z  Downloaded pygments
+2026-08-24T05:17:54.5298336Z  Downloaded ruff
+2026-08-24T05:17:54.6899668Z       Built qwen-experiment-metrics @ file:///home/runner/work/2_Qwen/2_Qwen/qwen-experiment-metrics
+2026-08-24T05:17:54.7143493Z Installed 8 packages in 15ms
+2026-08-24T05:17:54.7785701Z All checks passed!
+2026-08-24T05:17:54.8088687Z ##[group]Run uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests
+2026-08-24T05:17:54.8089429Z [36;1muv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests[0m
+2026-08-24T05:17:54.8129419Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:17:54.8129689Z env:
+2026-08-24T05:17:54.8129993Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:54.8130400Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:54.8130719Z ##[endgroup]
+2026-08-24T05:17:57.5053293Z ........................................................................ [ 74%]
+2026-08-24T05:17:58.8192445Z .........................                                                [100%]
+2026-08-24T05:17:58.8622744Z Post job cleanup.
+2026-08-24T05:17:58.9773136Z UV_CACHE_DIR is already set to /home/runner/work/_temp/setup-uv-cache
+2026-08-24T05:17:58.9777160Z UV_PYTHON_INSTALL_DIR is already set to /home/runner/work/_temp/uv-python-dir
+2026-08-24T05:17:58.9779059Z Cache hit occurred on key setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.3-pruned-3c984223b2ec0ff5f0603ed5de2beb8fb5f1ade7fd1de9fa6303f97a3e4c90c1, not saving cache.
+2026-08-24T05:17:59.0496101Z Post job cleanup.
+2026-08-24T05:17:59.1515820Z [command]/usr/bin/git version
+2026-08-24T05:17:59.1693403Z git version 2.55.0
+2026-08-24T05:17:59.1698747Z Temporarily overriding HOME='/home/runner/work/_temp/59e113a5-edbf-438f-a222-ea1a3a719a58' before making global git config changes
+2026-08-24T05:17:59.1699832Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:17:59.1700852Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/2_Qwen/2_Qwen
+2026-08-24T05:17:59.1709502Z Removing SSH command configuration
+2026-08-24T05:17:59.1710891Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:17:59.2069969Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:17:59.2737422Z Removing HTTP extra header
+2026-08-24T05:17:59.2740083Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:17:59.2753737Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:17:59.3470563Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:17:59.3478979Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:17:59.3634633Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:17:59.3635584Z includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:17:59.3636322Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:17:59.3636928Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:17:59.3638629Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:17:59.3639738Z /home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:59.3641762Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-6d7a78b0\-fdd5\-42ac\-b201\-a919ed35b709\.config
+2026-08-24T05:17:59.3643956Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:17:59.3645123Z /home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:59.3662375Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-6d7a78b0\-fdd5\-42ac\-b201\-a919ed35b709\.config
+2026-08-24T05:17:59.4049356Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:17:59.4050821Z /github/runner_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:59.4081331Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-6d7a78b0\-fdd5\-42ac\-b201\-a919ed35b709\.config
+2026-08-24T05:17:59.4097438Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:17:59.4104755Z /github/runner_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config
+2026-08-24T05:17:59.4295463Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-6d7a78b0\-fdd5\-42ac\-b201\-a919ed35b709\.config
+2026-08-24T05:17:59.4298188Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:17:59.4406762Z Removing credentials config '/home/runner/work/_temp/git-credentials-6d7a78b0-fdd5-42ac-b201-a919ed35b709.config'
+2026-08-24T05:17:59.4551091Z Cleaning up orphan processes
+
+===== 2_玄界 _ ローカルarchiveからSquashFSを配備.txt =====
+﻿2026-08-24T05:23:49.3091859Z Current runner version: '2.336.0'
+2026-08-24T05:23:49.3111573Z Runner name: 'genkai0002-3'
+2026-08-24T05:23:49.3112491Z Runner group name: 'default'
+2026-08-24T05:23:49.3113553Z Machine name: 'genkai0002'
+2026-08-24T05:23:49.3119463Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:23:49.3122533Z Actions: read
+2026-08-24T05:23:49.3123119Z Contents: read
+2026-08-24T05:23:49.3123723Z Metadata: read
+2026-08-24T05:23:49.3124330Z ##[endgroup]
+2026-08-24T05:23:49.3126869Z Secret source: Actions
+2026-08-24T05:23:49.3128040Z Prepare workflow directory
+2026-08-24T05:23:49.6089155Z Prepare all required actions
+2026-08-24T05:23:49.6142720Z Getting action download info
+2026-08-24T05:23:50.5519435Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:23:51.8070376Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:51.8077320Z ##[group] Inputs
+2026-08-24T05:23:51.8079085Z   node_count: 1
+2026-08-24T05:23:51.8081868Z   container_sha256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:23:51.8084939Z   container_size: 12718911488
+2026-08-24T05:23:51.8090114Z ##[endgroup]
+2026-08-24T05:23:51.8092523Z Complete job name: 玄界 / ローカルarchiveからSquashFSを配備
+2026-08-24T05:23:58.0952914Z ##[group]Run actions/checkout@v7
+2026-08-24T05:23:58.0953909Z with:
+2026-08-24T05:23:58.0954232Z   persist-credentials: false
+2026-08-24T05:23:58.0954608Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:23:58.0957494Z   token: ***
+2026-08-24T05:23:58.0957778Z   ssh-strict: true
+2026-08-24T05:23:58.0958080Z   ssh-user: git
+2026-08-24T05:23:58.0958392Z   clean: true
+2026-08-24T05:23:58.0958684Z   sparse-checkout-cone-mode: true
+2026-08-24T05:23:58.0959003Z   fetch-depth: 1
+2026-08-24T05:23:58.0959269Z   fetch-tags: false
+2026-08-24T05:23:58.0959541Z   show-progress: true
+2026-08-24T05:23:58.0959817Z   lfs: false
+2026-08-24T05:23:58.0960080Z   submodules: false
+2026-08-24T05:23:58.0960413Z   set-safe-directory: true
+2026-08-24T05:23:58.0960738Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:23:58.0961295Z env:
+2026-08-24T05:23:58.0961591Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:23:58.0961939Z ##[endgroup]
+2026-08-24T05:24:02.0365821Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:24:02.0367622Z ##[group]Getting Git version info
+2026-08-24T05:24:02.0368228Z Working directory is '/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen'
+2026-08-24T05:24:02.0369046Z [command]/usr/bin/git version
+2026-08-24T05:24:02.0409601Z git version 2.43.7
+2026-08-24T05:24:02.0451013Z ##[endgroup]
+2026-08-24T05:24:02.0469314Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:24:02.0511275Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/212c1dec-2101-4e2a-927c-bd23bb91657f' before making global git config changes
+2026-08-24T05:24:02.0512210Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:24:02.0516303Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen
+2026-08-24T05:24:02.0758060Z Deleting the contents of '/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen'
+2026-08-24T05:24:02.0775292Z ##[group]Determining repository object format
+2026-08-24T05:24:02.0777234Z ##[endgroup]
+2026-08-24T05:24:02.0777736Z ##[group]Initializing the repository
+2026-08-24T05:24:02.0781869Z [command]/usr/bin/git init /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen
+2026-08-24T05:24:02.1043806Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:24:02.1044504Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-24T05:24:02.1045062Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-24T05:24:02.1050190Z hint: 
+2026-08-24T05:24:02.1050563Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:24:02.1050904Z hint: 
+2026-08-24T05:24:02.1051290Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:24:02.1051843Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:24:02.1052240Z hint: 
+2026-08-24T05:24:02.1052497Z hint: 	git branch -m <name>
+2026-08-24T05:24:02.1175596Z Initialized empty Git repository in /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:24:02.1188035Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:24:02.1317814Z ##[endgroup]
+2026-08-24T05:24:02.1318287Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:24:02.1322582Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:24:02.1404870Z ##[endgroup]
+2026-08-24T05:24:02.1405345Z ##[group]Setting up auth
+2026-08-24T05:24:02.1406000Z Removing SSH command configuration
+2026-08-24T05:24:02.1411371Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:24:02.1784689Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:24:02.2088926Z Removing HTTP extra header
+2026-08-24T05:24:02.2093877Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:24:02.2156192Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:24:02.2781273Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:24:02.2786641Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:24:02.2861779Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:24:02.3452663Z [command]/usr/bin/git config --file /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:24:02.3567031Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git.path /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:02.3658416Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:02.3876303Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:02.3968369Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:02.4062064Z ##[endgroup]
+2026-08-24T05:24:02.4062810Z ##[group]Fetching the repository
+2026-08-24T05:24:02.4068514Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67f79953c1610a7db516c0e893726d807ee8a912:refs/remotes/origin/main
+2026-08-24T05:24:03.1783988Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:24:03.1784684Z  * [new ref]         67f79953c1610a7db516c0e893726d807ee8a912 -> origin/main
+2026-08-24T05:24:03.1885576Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:24:03.2010403Z   origin/main
+2026-08-24T05:24:03.2020733Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:24:03.2084607Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:24:03.2088126Z ##[endgroup]
+2026-08-24T05:24:03.2088703Z ##[group]Determining the checkout info
+2026-08-24T05:24:03.2089420Z ##[endgroup]
+2026-08-24T05:24:03.2093069Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:24:03.2253491Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:24:03.2340468Z ##[group]Checking out the ref
+2026-08-24T05:24:03.2343826Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:24:03.4827607Z Switched to a new branch 'main'
+2026-08-24T05:24:03.4845919Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:24:03.4854977Z ##[endgroup]
+2026-08-24T05:24:03.4996530Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:24:03.5103056Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:24:03.5125105Z ##[group]Removing auth
+2026-08-24T05:24:03.5126404Z Removing SSH command configuration
+2026-08-24T05:24:03.5127894Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:24:03.5204365Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:24:03.5945307Z Removing HTTP extra header
+2026-08-24T05:24:03.5949182Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:24:03.6015808Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:24:03.7234040Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:24:03.7237234Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:24:03.7311494Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:24:03.7312325Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:24:03.7312901Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:24:03.7313314Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:24:03.7322136Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:24:03.7397789Z /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:03.7408747Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git.path \/home\/PROJECT\/share\/actions\-runners\/genkai0002\-3\/_work\/_temp\/git\-credentials\-e9fd9411\-6d7b\-4498\-af09\-06cee336b31a\.config
+2026-08-24T05:24:03.7503807Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:24:03.7566833Z /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:03.7574557Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/PROJECT\/share\/actions\-runners\/genkai0002\-3\/_work\/_temp\/git\-credentials\-e9fd9411\-6d7b\-4498\-af09\-06cee336b31a\.config
+2026-08-24T05:24:03.7773955Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:24:03.7856233Z /github/runner_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:03.7866534Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-e9fd9411\-6d7b\-4498\-af09\-06cee336b31a\.config
+2026-08-24T05:24:03.8318541Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:24:03.8380006Z /github/runner_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config
+2026-08-24T05:24:03.8387009Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-e9fd9411\-6d7b\-4498\-af09\-06cee336b31a\.config
+2026-08-24T05:24:03.8474499Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:24:03.9148521Z Removing credentials config '/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/git-credentials-e9fd9411-6d7b-4498-af09-06cee336b31a.config'
+2026-08-24T05:24:03.9163359Z ##[endgroup]
+2026-08-24T05:24:03.9748965Z ##[group]Run export PROVISION_OUTPUT="${GITHUB_OUTPUT}"
+2026-08-24T05:24:03.9749544Z [36;1mexport PROVISION_OUTPUT="${GITHUB_OUTPUT}"[0m
+2026-08-24T05:24:03.9749986Z [36;1m"${GITHUB_WORKSPACE}/scripts/provision-qwen-check-env.sh"[0m
+2026-08-24T05:24:03.9750488Z [36;1mruntime_dir="$(sed -n 's/^runtime_dir=//p' "${GITHUB_OUTPUT}" | tail -n 1)"[0m
+2026-08-24T05:24:03.9751188Z [36;1minstall -m 0755 "${GITHUB_WORKSPACE}/platforms/genkai/check-qwen-container.pjm" "${runtime_dir}/scripts/check-qwen-container.pjm"[0m
+2026-08-24T05:24:03.9768707Z shell: /usr/bin/bash -eo pipefail {0}
+2026-08-24T05:24:03.9769016Z env:
+2026-08-24T05:24:03.9769285Z   RUNTIME_ROOT: /fast/PROJECT/sglang-runs
+2026-08-24T05:24:03.9769593Z   CLUSTER_NAME: genkai
+2026-08-24T05:24:03.9769905Z   CONTAINER_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-containers
+2026-08-24T05:24:03.9770398Z   CONTAINER_SHA256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:24:03.9770901Z   CONTAINER_SIZE: 12718911488
+2026-08-24T05:24:03.9771279Z   ENROOT_LIBRARY_PATH: /home/ACCOUNT/ku60000563/.local/lib/enroot
+2026-08-24T05:24:03.9771698Z   ENROOT_SYSCONF_PATH: /home/ACCOUNT/ku60000563/.local/etc/enroot
+2026-08-24T05:24:03.9772031Z ##[endgroup]
+2026-08-24T05:24:30.3930923Z Post job cleanup.
+2026-08-24T05:24:30.4912159Z [command]/usr/bin/git version
+2026-08-24T05:24:30.4960612Z git version 2.43.7
+2026-08-24T05:24:30.4990209Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:24:30.5032319Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0002-3/_work/_temp/dc900346-4a67-4ad7-9068-0fdfd993d231' before making global git config changes
+2026-08-24T05:24:30.5033203Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:24:30.5037053Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0002-3/_work/2_Qwen/2_Qwen
+2026-08-24T05:24:30.5127473Z Removing SSH command configuration
+2026-08-24T05:24:30.5134551Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:24:30.5208035Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:24:30.5847290Z Removing HTTP extra header
+2026-08-24T05:24:30.5852491Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:24:30.5917450Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:24:30.6570059Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:24:30.6577880Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:24:30.6661257Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:24:30.7628499Z Evaluate and set job outputs
+2026-08-24T05:24:30.7637602Z Set output 'runtime_dir'
+2026-08-24T05:24:30.7640056Z Cleaning up orphan processes
+
+===== 4_AWSでSquashFSを準備 _ 全クラスタのローカルarchiveを確認.txt =====
+﻿2026-08-24T05:23:39.8212175Z Current runner version: '2.336.0'
+2026-08-24T05:23:39.8239089Z ##[group]Runner Image Provisioner
+2026-08-24T05:23:39.8240214Z Hosted Compute Agent
+2026-08-24T05:23:39.8240881Z Version: 20260729.566
+2026-08-24T05:23:39.8241545Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-24T05:23:39.8242315Z Build Date: 2026-07-29T19:17:02Z
+2026-08-24T05:23:39.8243102Z Worker ID: {799ef785-dd73-4e51-b43d-c5a3b631adf7}
+2026-08-24T05:23:39.8243870Z Azure Region: westus2
+2026-08-24T05:23:39.8244490Z ##[endgroup]
+2026-08-24T05:23:39.8246066Z ##[group]Operating System
+2026-08-24T05:23:39.8246769Z Ubuntu
+2026-08-24T05:23:39.8247385Z 24.04.4
+2026-08-24T05:23:39.8247913Z LTS
+2026-08-24T05:23:39.8248477Z ##[endgroup]
+2026-08-24T05:23:39.8249101Z ##[group]Runner Image
+2026-08-24T05:23:39.8249954Z Image: ubuntu-24.04
+2026-08-24T05:23:39.8251072Z Version: 20260816.277.1
+2026-08-24T05:23:39.8252376Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260816.277/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-24T05:23:39.8253985Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260816.277
+2026-08-24T05:23:39.8255007Z ##[endgroup]
+2026-08-24T05:23:39.8256261Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:23:39.8258481Z Actions: read
+2026-08-24T05:23:39.8259191Z Contents: read
+2026-08-24T05:23:39.8260332Z Metadata: read
+2026-08-24T05:23:39.8260917Z ##[endgroup]
+2026-08-24T05:23:39.8263305Z Secret source: Actions
+2026-08-24T05:23:39.8264396Z Prepare workflow directory
+2026-08-24T05:23:39.8790869Z Prepare all required actions
+2026-08-24T05:23:39.8881036Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:39.8888865Z ##[group] Inputs
+2026-08-24T05:23:39.8891057Z   require_build: false
+2026-08-24T05:23:39.8892236Z ##[endgroup]
+2026-08-24T05:23:39.8893610Z Complete job name: AWSでSquashFSを準備 / 全クラスタのローカルarchiveを確認
+2026-08-24T05:23:40.6187535Z ##[group]Run if [[ 'reuse' == build ]]; then container_sha256=${BUILD_SHA256}; container_size=${BUILD_SIZE}; source_run_id=${GITHUB_RUN_ID}; else container_sha256=${REUSE_SHA256}; container_size=${REUSE_SIZE}; source_run_id='32689409893'; fi
+2026-08-24T05:23:40.6190682Z [36;1mif [[ 'reuse' == build ]]; then container_sha256=${BUILD_SHA256}; container_size=${BUILD_SIZE}; source_run_id=${GITHUB_RUN_ID}; else container_sha256=${REUSE_SHA256}; container_size=${REUSE_SIZE}; source_run_id='32689409893'; fi[0m
+2026-08-24T05:23:40.6193143Z [36;1mprintf 'action=%s\nsource_run_id=%s\ncontainer_sha256=%s\ncontainer_size=%s\n' 'reuse' "${source_run_id}" "${container_sha256}" "${container_size}" >>"${GITHUB_OUTPUT}"[0m
+2026-08-24T05:23:40.8973483Z shell: /usr/bin/bash -e {0}
+2026-08-24T05:23:40.8975133Z env:
+2026-08-24T05:23:40.8976126Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:23:40.8977866Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:23:40.8980284Z   BUILD_SHA256: 
+2026-08-24T05:23:40.9074728Z   BUILD_SIZE: 
+2026-08-24T05:23:40.9075981Z   REUSE_SHA256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:23:40.9077327Z   REUSE_SIZE: 12718911488
+2026-08-24T05:23:40.9078172Z ##[endgroup]
+2026-08-24T05:23:40.9636578Z Evaluate and set job outputs
+2026-08-24T05:23:40.9647598Z Set output 'action'
+2026-08-24T05:23:40.9652420Z Set output 'container_sha256'
+2026-08-24T05:23:40.9653906Z Set output 'container_size'
+2026-08-24T05:23:40.9654681Z Set output 'source_run_id'
+2026-08-24T05:23:40.9656037Z Cleaning up orphan processes
+
+===== 5_AWSでSquashFSを準備 _ ASPIRE 2A+のローカルarchiveへ確定.txt =====
+﻿2026-08-24T05:22:31.8704288Z Current runner version: '2.336.0'
+2026-08-24T05:22:31.8718642Z Runner name: 'a2ap-login01-6'
+2026-08-24T05:22:31.8719521Z Runner group name: 'default'
+2026-08-24T05:22:31.8720445Z Machine name: 'a2ap-login01'
+2026-08-24T05:22:31.8725766Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:22:31.8728245Z Actions: read
+2026-08-24T05:22:31.8728846Z Contents: read
+2026-08-24T05:22:31.8729490Z Metadata: read
+2026-08-24T05:22:31.8730064Z ##[endgroup]
+2026-08-24T05:22:31.8732314Z Secret source: Actions
+2026-08-24T05:22:31.8733656Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTP requests.
+2026-08-24T05:22:31.8734938Z Runner is running behind proxy server 'http://192.0.2.5:10104' for all HTTPS requests.
+2026-08-24T05:22:31.8735954Z Prepare workflow directory
+2026-08-24T05:22:31.9353943Z Prepare all required actions
+2026-08-24T05:22:31.9402436Z Getting action download info
+2026-08-24T05:22:32.9037966Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:22:34.2090842Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-08-24T05:22:35.2982317Z Download action repository 'aws-actions/configure-aws-credentials@v6.2.3' (SHA:e6de054238d6b7531b4efff3b6587d9aade6a06c)
+2026-08-24T05:22:37.0388211Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:37.0392641Z ##[group] Inputs
+2026-08-24T05:22:37.0393440Z   require_build: false
+2026-08-24T05:22:37.0393833Z ##[endgroup]
+2026-08-24T05:22:37.0394343Z Complete job name: AWSでSquashFSを準備 / ASPIRE 2A+のローカルarchiveへ確定
+2026-08-24T05:22:37.3163900Z ##[group]Run actions/checkout@v7
+2026-08-24T05:22:37.3164761Z with:
+2026-08-24T05:22:37.3165115Z   persist-credentials: false
+2026-08-24T05:22:37.3165637Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:37.3169005Z   token: ***
+2026-08-24T05:22:37.3169355Z   ssh-strict: true
+2026-08-24T05:22:37.3169732Z   ssh-user: git
+2026-08-24T05:22:37.3170049Z   clean: true
+2026-08-24T05:22:37.3170454Z   sparse-checkout-cone-mode: true
+2026-08-24T05:22:37.3170849Z   fetch-depth: 1
+2026-08-24T05:22:37.3171232Z   fetch-tags: false
+2026-08-24T05:22:37.3171582Z   show-progress: true
+2026-08-24T05:22:37.3171891Z   lfs: false
+2026-08-24T05:22:37.3172221Z   submodules: false
+2026-08-24T05:22:37.3172565Z   set-safe-directory: true
+2026-08-24T05:22:37.3172947Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:22:37.3173544Z env:
+2026-08-24T05:22:37.3173865Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:37.3174531Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:37.3175056Z ##[endgroup]
+2026-08-24T05:22:38.3376574Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:38.3382046Z ##[group]Getting Git version info
+2026-08-24T05:22:38.3384630Z Working directory is '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:38.3388693Z [command]/usr/bin/git version
+2026-08-24T05:22:38.3390110Z git version 2.34.1
+2026-08-24T05:22:38.3460583Z ##[endgroup]
+2026-08-24T05:22:38.3485387Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:22:38.3539756Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/78750ae0-6a27-495b-992b-6141480c746c' before making global git config changes
+2026-08-24T05:22:38.3543948Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:22:38.3552373Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:38.3675037Z Deleting the contents of '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:38.3701028Z ##[group]Determining repository object format
+2026-08-24T05:22:38.3703934Z ##[endgroup]
+2026-08-24T05:22:38.3706129Z ##[group]Initializing the repository
+2026-08-24T05:22:38.3714875Z [command]/usr/bin/git init /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:38.3896820Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:22:38.3899219Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-24T05:22:38.3901569Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-24T05:22:38.3903163Z hint: 
+2026-08-24T05:22:38.3904659Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:22:38.3906139Z hint: 
+2026-08-24T05:22:38.3907768Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:22:38.3909959Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:22:38.3911881Z hint: 
+2026-08-24T05:22:38.3912976Z hint: 	git branch -m <name>
+2026-08-24T05:22:38.4001633Z Initialized empty Git repository in /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:22:38.4428069Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:38.4432970Z ##[endgroup]
+2026-08-24T05:22:38.4434641Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:22:38.4436226Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:22:38.4439327Z ##[endgroup]
+2026-08-24T05:22:38.4447379Z ##[group]Setting up auth
+2026-08-24T05:22:38.4448705Z Removing SSH command configuration
+2026-08-24T05:22:38.4450853Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:38.4455639Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:38.4902595Z Removing HTTP extra header
+2026-08-24T05:22:38.4914636Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:38.4983759Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:38.5497614Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:38.5512669Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:38.5589484Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:38.6175954Z [command]/usr/bin/git config --file /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:22:38.6296050Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:38.6394310Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:38.6499995Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:38.6591377Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:38.6690716Z ##[endgroup]
+2026-08-24T05:22:38.6693045Z ##[group]Fetching the repository
+2026-08-24T05:22:38.6714048Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67f79953c1610a7db516c0e893726d807ee8a912:refs/remotes/origin/main
+2026-08-24T05:22:39.4134378Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:39.4136320Z  * [new ref]         67f79953c1610a7db516c0e893726d807ee8a912 -> origin/main
+2026-08-24T05:22:39.4300062Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:22:39.4405993Z   origin/main
+2026-08-24T05:22:39.4425731Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:22:39.4486244Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:39.4495269Z ##[endgroup]
+2026-08-24T05:22:39.4497563Z ##[group]Determining the checkout info
+2026-08-24T05:22:39.4500026Z ##[endgroup]
+2026-08-24T05:22:39.4510317Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:22:39.4653270Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:22:39.4738030Z ##[group]Checking out the ref
+2026-08-24T05:22:39.4749315Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:22:39.5965205Z Switched to a new branch 'main'
+2026-08-24T05:22:39.5982532Z Branch 'main' set up to track remote branch 'main' from 'origin'.
+2026-08-24T05:22:39.5993164Z ##[endgroup]
+2026-08-24T05:22:39.6168386Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:22:39.6282670Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:39.6389112Z ##[group]Removing auth
+2026-08-24T05:22:39.6390071Z Removing SSH command configuration
+2026-08-24T05:22:39.6400316Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:39.6496869Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:39.7092515Z Removing HTTP extra header
+2026-08-24T05:22:39.7101965Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:39.7174298Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:39.7731415Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:39.7733420Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:39.7787918Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:39.7791118Z includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:39.7793467Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:39.7794824Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:39.7807703Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:39.7865217Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:39.7876052Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-6\/_work\/_temp\/git\-credentials\-a190fdb1\-6be7\-436c\-8ed7\-be78fb79d4bc\.config
+2026-08-24T05:22:39.7971686Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:39.8021043Z /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:39.8039078Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/users\/industry\/ai\-hpc\/ACCOUNT\/actions\-runner\/runners\/a2ap\-login01\-6\/_work\/_temp\/git\-credentials\-a190fdb1\-6be7\-436c\-8ed7\-be78fb79d4bc\.config
+2026-08-24T05:22:39.8123691Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:39.8168875Z /github/runner_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:39.8176030Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-a190fdb1\-6be7\-436c\-8ed7\-be78fb79d4bc\.config
+2026-08-24T05:22:39.8238686Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:39.8285023Z /github/runner_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config
+2026-08-24T05:22:39.8293795Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-a190fdb1\-6be7\-436c\-8ed7\-be78fb79d4bc\.config
+2026-08-24T05:22:39.8357026Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:39.8870516Z Removing credentials config '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/git-credentials-a190fdb1-6be7-436c-8ed7-be78fb79d4bc.config'
+2026-08-24T05:22:39.8893204Z ##[endgroup]
+2026-08-24T05:22:39.9827484Z ##[group]Run scripts/materialize-qwen-container.sh
+2026-08-24T05:22:39.9829128Z [36;1mscripts/materialize-qwen-container.sh[0m
+2026-08-24T05:22:39.9891221Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:22:39.9892322Z env:
+2026-08-24T05:22:39.9893087Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:39.9894488Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:39.9895947Z   ACTION: reuse
+2026-08-24T05:22:39.9898062Z   CONTAINER_ARCHIVE_DIR: /scratch/users/industry/ai-hpc/ACCOUNT/sglang-containers
+2026-08-24T05:22:39.9899499Z   CONTAINER_KEY: 
+2026-08-24T05:22:39.9900783Z   CONTAINER_SHA256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:22:39.9902254Z   CONTAINER_SIZE: 12718911488
+2026-08-24T05:22:39.9903104Z   SIDECAR_KEY: 
+2026-08-24T05:22:39.9903853Z   SOURCE_RUN_ID: 32689409893
+2026-08-24T05:22:39.9904686Z ##[endgroup]
+2026-08-24T05:23:29.4432737Z Post job cleanup.
+2026-08-24T05:23:29.5369836Z [command]/usr/bin/git version
+2026-08-24T05:23:29.5425569Z git version 2.34.1
+2026-08-24T05:23:29.5454857Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:23:29.5495303Z Temporarily overriding HOME='/scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/_temp/fc4bbc9e-ca22-4e9f-bd5f-03414709e89e' before making global git config changes
+2026-08-24T05:23:29.5498942Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:23:29.5502042Z [command]/usr/bin/git config --global --add safe.directory /scratch/users/industry/ai-hpc/ACCOUNT/actions-runner/runners/a2ap-login01-6/_work/2_Qwen/2_Qwen
+2026-08-24T05:23:29.5575552Z Removing SSH command configuration
+2026-08-24T05:23:29.5581108Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:23:29.5642847Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:23:29.6108611Z Removing HTTP extra header
+2026-08-24T05:23:29.6112092Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:23:29.6159634Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:23:29.6706028Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:23:29.6713506Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:23:29.6776094Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:23:29.7724756Z Cleaning up orphan processes
+
+===== 6_AWSでSquashFSを準備 _ 玄界のローカルarchiveへ確定.txt =====
+﻿2026-08-24T05:22:31.5055806Z Current runner version: '2.336.0'
+2026-08-24T05:22:31.5071277Z Runner name: 'genkai0001-8'
+2026-08-24T05:22:31.5072103Z Runner group name: 'default'
+2026-08-24T05:22:31.5073135Z Machine name: 'genkai0001'
+2026-08-24T05:22:31.5077952Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:22:31.5080534Z Actions: read
+2026-08-24T05:22:31.5081261Z Contents: read
+2026-08-24T05:22:31.5081865Z Metadata: read
+2026-08-24T05:22:31.5082424Z ##[endgroup]
+2026-08-24T05:22:31.5084852Z Secret source: Actions
+2026-08-24T05:22:31.5085911Z Prepare workflow directory
+2026-08-24T05:22:31.8377283Z Prepare all required actions
+2026-08-24T05:22:31.8428882Z Getting action download info
+2026-08-24T05:22:32.9728428Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:22:34.5135006Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-08-24T05:22:35.9380569Z Download action repository 'aws-actions/configure-aws-credentials@v6.2.3' (SHA:e6de054238d6b7531b4efff3b6587d9aade6a06c)
+2026-08-24T05:22:36.9752707Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:36.9757066Z ##[group] Inputs
+2026-08-24T05:22:36.9757859Z   require_build: false
+2026-08-24T05:22:36.9758268Z ##[endgroup]
+2026-08-24T05:22:36.9758759Z Complete job name: AWSでSquashFSを準備 / 玄界のローカルarchiveへ確定
+2026-08-24T05:22:43.1622378Z ##[group]Run actions/checkout@v7
+2026-08-24T05:22:43.1623688Z with:
+2026-08-24T05:22:43.1624280Z   persist-credentials: false
+2026-08-24T05:22:43.1624986Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:43.1628303Z   token: ***
+2026-08-24T05:22:43.1628892Z   ssh-strict: true
+2026-08-24T05:22:43.1629465Z   ssh-user: git
+2026-08-24T05:22:43.1630048Z   clean: true
+2026-08-24T05:22:43.1630623Z   sparse-checkout-cone-mode: true
+2026-08-24T05:22:43.1631319Z   fetch-depth: 1
+2026-08-24T05:22:43.1631937Z   fetch-tags: false
+2026-08-24T05:22:43.1632871Z   show-progress: true
+2026-08-24T05:22:43.1633440Z   lfs: false
+2026-08-24T05:22:43.1634111Z   submodules: false
+2026-08-24T05:22:43.1634656Z   set-safe-directory: true
+2026-08-24T05:22:43.1635246Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:22:43.1636225Z env:
+2026-08-24T05:22:43.1636796Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:43.1637856Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:43.1638622Z ##[endgroup]
+2026-08-24T05:22:48.2855635Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:48.4055232Z ##[group]Getting Git version info
+2026-08-24T05:22:48.4056658Z Working directory is '/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:48.4100964Z [command]/usr/bin/git version
+2026-08-24T05:22:48.4393975Z git version 2.43.7
+2026-08-24T05:22:48.4436399Z ##[endgroup]
+2026-08-24T05:22:48.4446075Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:22:48.4498365Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/b9e5db2e-9f90-41ab-ac42-6a64571db4f7' before making global git config changes
+2026-08-24T05:22:48.4499574Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:22:48.4503319Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:48.4603090Z Deleting the contents of '/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:48.4618505Z ##[group]Determining repository object format
+2026-08-24T05:22:48.4620018Z ##[endgroup]
+2026-08-24T05:22:48.4620932Z ##[group]Initializing the repository
+2026-08-24T05:22:48.4626545Z [command]/usr/bin/git init /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:48.4874260Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:22:48.4998884Z hint: is subject to change. To configure the initial branch name to use in all
+2026-08-24T05:22:48.5003313Z hint: of your new repositories, which will suppress this warning, call:
+2026-08-24T05:22:48.5009490Z hint: 
+2026-08-24T05:22:48.5013320Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:22:48.5019611Z hint: 
+2026-08-24T05:22:48.5023303Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:22:48.5030558Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:22:48.5033814Z hint: 
+2026-08-24T05:22:48.5037914Z hint: 	git branch -m <name>
+2026-08-24T05:22:48.5488148Z Initialized empty Git repository in /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:22:48.5641307Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:48.6255371Z ##[endgroup]
+2026-08-24T05:22:48.6258149Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:22:48.6259894Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:22:48.6412696Z ##[endgroup]
+2026-08-24T05:22:48.6415141Z ##[group]Setting up auth
+2026-08-24T05:22:48.6417107Z Removing SSH command configuration
+2026-08-24T05:22:48.6429626Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:48.6494877Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:48.7146431Z Removing HTTP extra header
+2026-08-24T05:22:48.7150216Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:48.7220625Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:48.7986461Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:48.7993177Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:48.8069090Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:48.8745477Z [command]/usr/bin/git config --file /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:22:48.8839617Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git.path /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:48.8923236Z [command]/usr/bin/git config --local includeIf.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:48.9014723Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:48.9118861Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:48.9392001Z ##[endgroup]
+2026-08-24T05:22:48.9392886Z ##[group]Fetching the repository
+2026-08-24T05:22:48.9397756Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67f79953c1610a7db516c0e893726d807ee8a912:refs/remotes/origin/main
+2026-08-24T05:22:49.7616215Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:49.7618080Z  * [new ref]         67f79953c1610a7db516c0e893726d807ee8a912 -> origin/main
+2026-08-24T05:22:49.7720175Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:22:49.7825006Z   origin/main
+2026-08-24T05:22:49.7834634Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:22:49.7892911Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:49.7896838Z ##[endgroup]
+2026-08-24T05:22:49.7897521Z ##[group]Determining the checkout info
+2026-08-24T05:22:49.7898222Z ##[endgroup]
+2026-08-24T05:22:49.7901905Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:22:49.8582273Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:22:49.9320520Z ##[group]Checking out the ref
+2026-08-24T05:22:49.9334837Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:22:50.3693802Z Switched to a new branch 'main'
+2026-08-24T05:22:50.3713601Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:22:50.3725773Z ##[endgroup]
+2026-08-24T05:22:50.3877719Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:22:50.3986102Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:50.4007331Z ##[group]Removing auth
+2026-08-24T05:22:50.4007757Z Removing SSH command configuration
+2026-08-24T05:22:50.4012294Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:50.4078020Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:50.4845277Z Removing HTTP extra header
+2026-08-24T05:22:50.4848787Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:50.4916797Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:50.5629857Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:50.5633457Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:50.5714032Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:50.5715277Z includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:50.5716438Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:50.5717578Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:50.5724101Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:50.5801447Z /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:50.5812364Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git.path \/home\/PROJECT\/share\/actions\-runners\/genkai0001\-8\/_work\/_temp\/git\-credentials\-568914ce\-24fd\-4158\-80a5\-71886fa4cb62\.config
+2026-08-24T05:22:50.5898629Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:50.5964810Z /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:50.5975931Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/home\/PROJECT\/share\/actions\-runners\/genkai0001\-8\/_work\/_temp\/git\-credentials\-568914ce\-24fd\-4158\-80a5\-71886fa4cb62\.config
+2026-08-24T05:22:50.6080124Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:50.6672424Z /github/runner_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:50.6687978Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-568914ce\-24fd\-4158\-80a5\-71886fa4cb62\.config
+2026-08-24T05:22:50.6793800Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:50.6861131Z /github/runner_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config
+2026-08-24T05:22:50.6870057Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-568914ce\-24fd\-4158\-80a5\-71886fa4cb62\.config
+2026-08-24T05:22:50.6967668Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:50.7748817Z Removing credentials config '/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/git-credentials-568914ce-24fd-4158-80a5-71886fa4cb62.config'
+2026-08-24T05:22:50.7764841Z ##[endgroup]
+2026-08-24T05:22:50.8517256Z ##[group]Run scripts/materialize-qwen-container.sh
+2026-08-24T05:22:50.8518129Z [36;1mscripts/materialize-qwen-container.sh[0m
+2026-08-24T05:22:50.8535720Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:22:50.8536348Z env:
+2026-08-24T05:22:50.8536921Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:50.8537649Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:50.8538353Z   ACTION: reuse
+2026-08-24T05:22:50.8538961Z   CONTAINER_ARCHIVE_DIR: /home/ACCOUNT/share/sglang-containers
+2026-08-24T05:22:50.8539605Z   CONTAINER_KEY: 
+2026-08-24T05:22:50.8540292Z   CONTAINER_SHA256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:22:50.8541153Z   CONTAINER_SIZE: 12718911488
+2026-08-24T05:22:50.8541729Z   SIDECAR_KEY: 
+2026-08-24T05:22:50.8542237Z   SOURCE_RUN_ID: 32689409893
+2026-08-24T05:22:50.8542763Z ##[endgroup]
+2026-08-24T05:23:06.3079108Z Post job cleanup.
+2026-08-24T05:23:06.4034341Z [command]/usr/bin/git version
+2026-08-24T05:23:06.4105159Z git version 2.43.7
+2026-08-24T05:23:06.4133896Z Copying '/home/ACCOUNT/ku60000563/.gitconfig' to '/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:23:06.4172325Z Temporarily overriding HOME='/home/ACCOUNT/share/actions-runners/genkai0001-8/_work/_temp/8e32d388-e73c-4662-9ea2-99dedfcb6b43' before making global git config changes
+2026-08-24T05:23:06.4173305Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:23:06.4185862Z [command]/usr/bin/git config --global --add safe.directory /home/ACCOUNT/share/actions-runners/genkai0001-8/_work/2_Qwen/2_Qwen
+2026-08-24T05:23:06.4277597Z Removing SSH command configuration
+2026-08-24T05:23:06.4287685Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:23:06.4366172Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:23:06.5010684Z Removing HTTP extra header
+2026-08-24T05:23:06.5014937Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:23:06.5079982Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:23:06.5705498Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:23:06.5710510Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:23:06.5780969Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:23:06.6826330Z Cleaning up orphan processes
+
+===== 7_AWSでSquashFSを準備 _ Firmusのローカルarchiveへ確定.txt =====
+﻿2026-08-24T05:22:30.1835006Z Current runner version: '2.336.0'
+2026-08-24T05:22:30.1848844Z Runner name: 'firmus-login-7'
+2026-08-24T05:22:30.1849593Z Runner group name: 'default'
+2026-08-24T05:22:30.1850445Z Machine name: 'login'
+2026-08-24T05:22:30.1854340Z ##[group]GITHUB_TOKEN Permissions
+2026-08-24T05:22:30.1856631Z Actions: read
+2026-08-24T05:22:30.1857175Z Contents: read
+2026-08-24T05:22:30.1857777Z Metadata: read
+2026-08-24T05:22:30.1858273Z ##[endgroup]
+2026-08-24T05:22:30.1860519Z Secret source: Actions
+2026-08-24T05:22:30.1861699Z Prepare workflow directory
+2026-08-24T05:22:30.2412002Z Prepare all required actions
+2026-08-24T05:22:30.2455826Z Getting action download info
+2026-08-24T05:22:31.0274095Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-24T05:22:31.7080940Z Download action repository 'astral-sh/setup-uv@v7' (SHA:37802adc94f370d6bfd71619e3f0bf239e1f3b78)
+2026-08-24T05:22:32.6521115Z Download action repository 'aws-actions/configure-aws-credentials@v6.2.3' (SHA:e6de054238d6b7531b4efff3b6587d9aade6a06c)
+2026-08-24T05:22:33.2973900Z Uses: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:33.2977380Z ##[group] Inputs
+2026-08-24T05:22:33.2977925Z   require_build: false
+2026-08-24T05:22:33.2978114Z ##[endgroup]
+2026-08-24T05:22:33.2978375Z Complete job name: AWSでSquashFSを準備 / Firmusのローカルarchiveへ確定
+2026-08-24T05:22:33.3669061Z ##[group]Run actions/checkout@v7
+2026-08-24T05:22:33.3669537Z with:
+2026-08-24T05:22:33.3669708Z   persist-credentials: false
+2026-08-24T05:22:33.3669934Z   repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:33.3671718Z   token: ***
+2026-08-24T05:22:33.3671869Z   ssh-strict: true
+2026-08-24T05:22:33.3672033Z   ssh-user: git
+2026-08-24T05:22:33.3672189Z   clean: true
+2026-08-24T05:22:33.3672365Z   sparse-checkout-cone-mode: true
+2026-08-24T05:22:33.3672550Z   fetch-depth: 1
+2026-08-24T05:22:33.3672697Z   fetch-tags: false
+2026-08-24T05:22:33.3672877Z   show-progress: true
+2026-08-24T05:22:33.3673032Z   lfs: false
+2026-08-24T05:22:33.3673170Z   submodules: false
+2026-08-24T05:22:33.3673334Z   set-safe-directory: true
+2026-08-24T05:22:33.3673524Z   allow-unsafe-pr-checkout: false
+2026-08-24T05:22:33.3673817Z env:
+2026-08-24T05:22:33.3673973Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:33.3674360Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:33.3674660Z ##[endgroup]
+2026-08-24T05:22:33.5838356Z Syncing repository: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:33.5839512Z ##[group]Getting Git version info
+2026-08-24T05:22:33.5839979Z Working directory is '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:33.5840580Z [command]/usr/bin/git version
+2026-08-24T05:22:33.5840804Z git version 2.52.0
+2026-08-24T05:22:33.5841587Z ##[endgroup]
+2026-08-24T05:22:33.5851409Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:22:33.5884492Z Temporarily overriding HOME='/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/58a1a392-2e04-47a8-8902-4871c839e387' before making global git config changes
+2026-08-24T05:22:33.5885331Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:22:33.5889902Z [command]/usr/bin/git config --global --add safe.directory /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:33.6004633Z Deleting the contents of '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen'
+2026-08-24T05:22:33.6016582Z ##[group]Determining repository object format
+2026-08-24T05:22:33.6017224Z ##[endgroup]
+2026-08-24T05:22:33.6017609Z ##[group]Initializing the repository
+2026-08-24T05:22:33.6020519Z [command]/usr/bin/git init /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen
+2026-08-24T05:22:33.8783162Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-24T05:22:33.8783777Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-24T05:22:33.8784270Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-24T05:22:33.8784724Z hint: call:
+2026-08-24T05:22:33.8784952Z hint:
+2026-08-24T05:22:33.8785258Z hint: 	git config --global init.defaultBranch <name>
+2026-08-24T05:22:33.8785624Z hint:
+2026-08-24T05:22:33.8785893Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-24T05:22:33.8786402Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-24T05:22:33.8786719Z hint:
+2026-08-24T05:22:33.8786902Z hint: 	git branch -m <name>
+2026-08-24T05:22:33.8787166Z hint:
+2026-08-24T05:22:33.8787553Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-24T05:22:33.8814598Z Initialized empty Git repository in /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git/
+2026-08-24T05:22:33.8822473Z [command]/usr/bin/git remote add origin https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:33.8991183Z ##[endgroup]
+2026-08-24T05:22:33.8991544Z ##[group]Disabling automatic garbage collection
+2026-08-24T05:22:33.8995145Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-24T05:22:33.9091438Z ##[endgroup]
+2026-08-24T05:22:33.9091772Z ##[group]Setting up auth
+2026-08-24T05:22:33.9092043Z Removing SSH command configuration
+2026-08-24T05:22:33.9096373Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:33.9194084Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:33.9816290Z Removing HTTP extra header
+2026-08-24T05:22:33.9820112Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:33.9926118Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:34.0541995Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:34.0546604Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:34.0638777Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:34.1272329Z [command]/usr/bin/git config --file /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-24T05:22:34.1373173Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git.path /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:34.1468788Z [command]/usr/bin/git config --local includeIf.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git/worktrees/*.path /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:34.1564948Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:34.1671396Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:34.1767465Z ##[endgroup]
+2026-08-24T05:22:34.1767960Z ##[group]Fetching the repository
+2026-08-24T05:22:34.1772265Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67f79953c1610a7db516c0e893726d807ee8a912:refs/remotes/origin/main
+2026-08-24T05:22:34.9458132Z From https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen
+2026-08-24T05:22:34.9458662Z  * [new ref]         67f79953c1610a7db516c0e893726d807ee8a912 -> origin/main
+2026-08-24T05:22:34.9656961Z [command]/usr/bin/git branch --list --remote origin/main
+2026-08-24T05:22:34.9803306Z   origin/main
+2026-08-24T05:22:34.9809359Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-08-24T05:22:34.9916404Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:34.9919803Z ##[endgroup]
+2026-08-24T05:22:34.9920294Z ##[group]Determining the checkout info
+2026-08-24T05:22:34.9920786Z ##[endgroup]
+2026-08-24T05:22:34.9923389Z [command]/usr/bin/git sparse-checkout disable
+2026-08-24T05:22:35.0236889Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-24T05:22:35.0351519Z ##[group]Checking out the ref
+2026-08-24T05:22:35.0354467Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-08-24T05:22:35.2089861Z Switched to a new branch 'main'
+2026-08-24T05:22:35.2189221Z branch 'main' set up to track 'origin/main'.
+2026-08-24T05:22:35.2190438Z ##[endgroup]
+2026-08-24T05:22:35.2359404Z [command]/usr/bin/git log -1 --format=%H
+2026-08-24T05:22:35.2523102Z 67f79953c1610a7db516c0e893726d807ee8a912
+2026-08-24T05:22:35.2540732Z ##[group]Removing auth
+2026-08-24T05:22:35.2541018Z Removing SSH command configuration
+2026-08-24T05:22:35.2543218Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:22:35.2657363Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:22:35.3359286Z Removing HTTP extra header
+2026-08-24T05:22:35.3360180Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:22:35.3476917Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:22:35.4177250Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:22:35.4180178Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:22:35.4291294Z includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:35.4292020Z includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:35.4292523Z includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:35.4292886Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:35.4295927Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git.path
+2026-08-24T05:22:35.4405776Z /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:35.4412592Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git.path \/scratch\/home\/ACCOUNT\/actions\-runner\/runners\/firmus\-login\-7\/_work\/_temp\/git\-credentials\-a38911d3\-5c77\-48a8\-b75a\-6ddc56ecb94f\.config
+2026-08-24T05:22:35.4523855Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git/worktrees/*.path
+2026-08-24T05:22:35.4612951Z /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:35.4618562Z [command]/usr/bin/git config --local --unset includeif.gitdir:/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen/.git/worktrees/*.path \/scratch\/home\/ACCOUNT\/actions\-runner\/runners\/firmus\-login\-7\/_work\/_temp\/git\-credentials\-a38911d3\-5c77\-48a8\-b75a\-6ddc56ecb94f\.config
+2026-08-24T05:22:35.4715132Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-24T05:22:35.4807203Z /github/runner_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:35.4814619Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-a38911d3\-5c77\-48a8\-b75a\-6ddc56ecb94f\.config
+2026-08-24T05:22:35.4911997Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-24T05:22:35.5007352Z /github/runner_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config
+2026-08-24T05:22:35.5012572Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-a38911d3\-5c77\-48a8\-b75a\-6ddc56ecb94f\.config
+2026-08-24T05:22:35.5104676Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:22:35.5739035Z Removing credentials config '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/git-credentials-a38911d3-5c77-48a8-b75a-6ddc56ecb94f.config'
+2026-08-24T05:22:35.5749627Z ##[endgroup]
+2026-08-24T05:22:35.6072472Z ##[group]Run scripts/materialize-qwen-container.sh
+2026-08-24T05:22:35.6072893Z [36;1mscripts/materialize-qwen-container.sh[0m
+2026-08-24T05:22:35.6093955Z shell: /usr/bin/bash --login -eo pipefail {0}
+2026-08-24T05:22:35.6094313Z env:
+2026-08-24T05:22:35.6094519Z   AWS_REGION: ap-southeast-1
+2026-08-24T05:22:35.6094856Z   CONTAINER_BUCKET: apac-qwen-container-artifacts-000000000000-ap-southeast-1
+2026-08-24T05:22:35.6095202Z   ACTION: reuse
+2026-08-24T05:22:35.6095443Z   CONTAINER_ARCHIVE_DIR: /scratch/home/ACCOUNT/qwen/containers
+2026-08-24T05:22:35.6095719Z   CONTAINER_KEY: 
+2026-08-24T05:22:35.6096009Z   CONTAINER_SHA256: 4903e92edb96832be0ad02b680a00304b0241426b9a68e197e5a2d90d884f9c0
+2026-08-24T05:22:35.6096338Z   CONTAINER_SIZE: 12718911488
+2026-08-24T05:22:35.6096533Z   SIDECAR_KEY: 
+2026-08-24T05:22:35.6096706Z   SOURCE_RUN_ID: 32689409893
+2026-08-24T05:22:35.6096901Z ##[endgroup]
+2026-08-24T05:23:26.6766485Z Post job cleanup.
+2026-08-24T05:23:26.8690921Z [command]/usr/bin/git version
+2026-08-24T05:23:26.8737637Z git version 2.52.0
+2026-08-24T05:23:26.8765415Z Copying '/home/ACCOUNT/.gitconfig' to '/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/00000000-0000-0000-0000-000000000000/.gitconfig'
+2026-08-24T05:23:26.8803437Z Temporarily overriding HOME='/scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/_temp/90c9ef02-67ed-45e9-b3d6-2aa25b8858c2' before making global git config changes
+2026-08-24T05:23:26.8804151Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-24T05:23:26.8813971Z [command]/usr/bin/git config --global --add safe.directory /scratch/home/ACCOUNT/actions-runner/runners/firmus-login-7/_work/2_Qwen/2_Qwen
+2026-08-24T05:23:26.8913238Z Removing SSH command configuration
+2026-08-24T05:23:26.8915696Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-24T05:23:26.9020739Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-24T05:23:26.9678434Z Removing HTTP extra header
+2026-08-24T05:23:26.9682054Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-24T05:23:26.9782958Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-24T05:23:27.0424072Z Removing includeIf entries pointing to credentials config files
+2026-08-24T05:23:27.0428083Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-24T05:23:27.0528183Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-24T05:23:27.1340308Z Cleaning up orphan processes
+
+===== AWSでSquashFSを準備 _ ASPIRE 2A+のローカルarchiveへ確定/system.txt =====
+2026-08-24T05:22:25.6480000Z Evaluating container.if
+2026-08-24T05:22:25.6480000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:22:25.6480000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:22:25.6480000Z Result: true
+2026-08-24T05:22:25.6480000Z Evaluating container.materialize.if
+2026-08-24T05:22:25.6480000Z Evaluating: (always() && (needs.decide.result == 'success') && (((((needs.decide.outputs.action == 'reuse') && (needs.resolve.result == 'skipped'))) || (((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))))
+2026-08-24T05:22:25.6480000Z Expanded: (true && ('success' == 'success') && ((('reuse' == 'reuse') && ('skipped' == 'skipped')) || ((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))
+2026-08-24T05:22:25.6480000Z Result: true
+2026-08-24T05:22:25.6500000Z Requested labels: self-hosted, aspire2p
+2026-08-24T05:22:25.6500000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:22:25.6500000Z Reusable workflow chain:
+2026-08-24T05:22:25.6500000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6500000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6500000Z Waiting for a runner to pick up this job...
+2026-08-24T05:22:26.3850000Z Job is about to start running on the runner: a2ap-login01-6
+===== AWSでSquashFSを準備 _ ASPIRE 2A+のローカル成果物を選択/system.txt =====
+2026-08-24T05:18:01.7680000Z Requested labels: self-hosted, aspire2p
+2026-08-24T05:18:01.7680000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:18:01.7680000Z Reusable workflow chain:
+2026-08-24T05:18:01.7680000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7680000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7680000Z Waiting for a runner to pick up this job...
+2026-08-24T05:18:01.7760000Z Job is about to start running on the runner: a2ap-login01-5
+2026-08-24T05:18:01.7660000Z Evaluating container.if
+2026-08-24T05:18:01.7660000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:18:01.7660000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:18:01.7660000Z Result: true
+2026-08-24T05:18:01.7660000Z Evaluating container.select-aspire2ap.if
+2026-08-24T05:18:01.7660000Z Evaluating: success()
+2026-08-24T05:18:01.7660000Z Result: true
+===== AWSでSquashFSを準備 _ Firmusのローカルarchiveへ確定/system.txt =====
+2026-08-24T05:22:25.6440000Z Evaluating container.if
+2026-08-24T05:22:25.6440000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:22:25.6440000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:22:25.6440000Z Result: true
+2026-08-24T05:22:25.6440000Z Evaluating container.materialize.if
+2026-08-24T05:22:25.6440000Z Evaluating: (always() && (needs.decide.result == 'success') && (((((needs.decide.outputs.action == 'reuse') && (needs.resolve.result == 'skipped'))) || (((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))))
+2026-08-24T05:22:25.6440000Z Expanded: (true && ('success' == 'success') && ((('reuse' == 'reuse') && ('skipped' == 'skipped')) || ((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))
+2026-08-24T05:22:25.6440000Z Result: true
+2026-08-24T05:22:25.6460000Z Requested labels: self-hosted, firmus
+2026-08-24T05:22:25.6460000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:22:25.6460000Z Reusable workflow chain:
+2026-08-24T05:22:25.6460000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6460000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6460000Z Waiting for a runner to pick up this job...
+2026-08-24T05:22:26.1280000Z Job is about to start running on the runner: firmus-login-7
+===== AWSでSquashFSを準備 _ Firmusのローカル成果物を選択/system.txt =====
+2026-08-24T05:18:01.7690000Z Requested labels: self-hosted, firmus
+2026-08-24T05:18:01.7690000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:18:01.7690000Z Reusable workflow chain:
+2026-08-24T05:18:01.7690000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7690000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7690000Z Waiting for a runner to pick up this job...
+2026-08-24T05:18:01.7680000Z Evaluating container.if
+2026-08-24T05:18:01.7680000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:18:01.7680000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:18:01.7680000Z Result: true
+2026-08-24T05:18:01.7680000Z Evaluating container.select-firmus.if
+2026-08-24T05:18:01.7680000Z Evaluating: success()
+2026-08-24T05:18:01.7680000Z Result: true
+2026-08-24T05:18:02.2690000Z Job is about to start running on the runner: firmus-login-6
+===== AWSでSquashFSを準備 _ 全クラスタのローカルarchiveを確認/system.txt =====
+2026-08-24T05:23:35.5940000Z Evaluating container.if
+2026-08-24T05:23:35.5940000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:23:35.5940000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:23:35.5940000Z Result: true
+2026-08-24T05:23:35.5940000Z Evaluating container.finalize.if
+2026-08-24T05:23:35.5940000Z Evaluating: (always() && (needs.decide.result == 'success') && (needs.materialize.result == 'success'))
+2026-08-24T05:23:35.5940000Z Expanded: (true && ('success' == 'success') && ('success' == 'success'))
+2026-08-24T05:23:35.5940000Z Result: true
+2026-08-24T05:23:35.6080000Z Job is waiting for a hosted runner to come online.
+2026-08-24T05:23:35.5940000Z Requested labels: ubuntu-latest
+2026-08-24T05:23:35.5940000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:23:35.5940000Z Reusable workflow chain:
+2026-08-24T05:23:35.5940000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:35.5940000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:35.5940000Z Waiting for a runner to pick up this job...
+2026-08-24T05:23:35.6080000Z Job is about to start running on the hosted runner: GitHub Actions 1000000477
+===== AWSでSquashFSを準備 _ 再利用するローカル成果物を確定/system.txt =====
+2026-08-24T05:22:15.9260000Z Requested labels: ubuntu-latest
+2026-08-24T05:22:15.9260000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:22:15.9260000Z Reusable workflow chain:
+2026-08-24T05:22:15.9260000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:15.9260000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:15.9260000Z Waiting for a runner to pick up this job...
+2026-08-24T05:22:15.9250000Z Evaluating container.if
+2026-08-24T05:22:15.9250000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:22:15.9250000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:22:15.9250000Z Result: true
+2026-08-24T05:22:15.9250000Z Evaluating container.decide.if
+2026-08-24T05:22:15.9250000Z Evaluating: success()
+2026-08-24T05:22:15.9250000Z Result: true
+2026-08-24T05:22:16.3650000Z Job is about to start running on the hosted runner: GitHub Actions 1000000476
+2026-08-24T05:22:16.3640000Z Job is waiting for a hosted runner to come online.
+===== AWSでSquashFSを準備 _ 玄界のローカルarchiveへ確定/system.txt =====
+2026-08-24T05:22:25.6460000Z Requested labels: self-hosted, genkai
+2026-08-24T05:22:25.6460000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:22:25.6460000Z Reusable workflow chain:
+2026-08-24T05:22:25.6460000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6460000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:22:25.6460000Z Waiting for a runner to pick up this job...
+2026-08-24T05:22:25.6460000Z Evaluating container.if
+2026-08-24T05:22:25.6460000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:22:25.6460000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:22:25.6460000Z Result: true
+2026-08-24T05:22:25.6460000Z Evaluating container.materialize.if
+2026-08-24T05:22:25.6460000Z Evaluating: (always() && (needs.decide.result == 'success') && (((((needs.decide.outputs.action == 'reuse') && (needs.resolve.result == 'skipped'))) || (((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))))
+2026-08-24T05:22:25.6460000Z Expanded: (true && ('success' == 'success') && ((('reuse' == 'reuse') && ('skipped' == 'skipped')) || ((needs.decide.outputs.action == 'build') && (needs.resolve.result == 'success'))))
+2026-08-24T05:22:25.6460000Z Result: true
+2026-08-24T05:22:26.1330000Z Job is about to start running on the runner: genkai0001-8
+===== AWSでSquashFSを準備 _ 玄界のローカル成果物を選択/system.txt =====
+2026-08-24T05:18:01.7710000Z Requested labels: self-hosted, genkai
+2026-08-24T05:18:01.7710000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main
+2026-08-24T05:18:01.7710000Z Reusable workflow chain:
+2026-08-24T05:18:01.7710000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7710000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/aws-container.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:18:01.7710000Z Waiting for a runner to pick up this job...
+2026-08-24T05:18:01.7690000Z Evaluating container.if
+2026-08-24T05:18:01.7690000Z Evaluating: (success() && (((((github.event_name == 'push') && ((contains(github.event.head_commit.message, '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))))) || (((github.event_name == 'workflow_dispatch') && ((inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)))))))
+2026-08-24T05:18:01.7690000Z Expanded: (true && ((('push' == 'push') && (contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]') || contains(github.event.head_commit.message, '[cluster:aspire2ap]') || contains(github.event.head_commit.message, '[cluster:firmus]'))) 
+2026-08-24T05:18:01.7690000Z Result: true
+2026-08-24T05:18:01.7690000Z Evaluating container.select-genkai.if
+2026-08-24T05:18:01.7690000Z Evaluating: success()
+2026-08-24T05:18:01.7690000Z Result: true
+2026-08-24T05:18:02.2730000Z Job is about to start running on the runner: genkai0002-4
+===== 制御処理を検証 _ validate/system.txt =====
+2026-08-24T05:17:40.1100000Z Evaluating validate.if
+2026-08-24T05:17:40.1100000Z Evaluating: success()
+2026-08-24T05:17:40.1100000Z Result: true
+2026-08-24T05:17:40.1100000Z Evaluating validate.validate.if
+2026-08-24T05:17:40.1100000Z Evaluating: success()
+2026-08-24T05:17:40.1100000Z Result: true
+2026-08-24T05:17:40.1120000Z Requested labels: ubuntu-latest
+2026-08-24T05:17:40.1120000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/main
+2026-08-24T05:17:40.1120000Z Reusable workflow chain:
+2026-08-24T05:17:40.1120000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:17:40.1120000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/validate.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:17:40.1120000Z Waiting for a runner to pick up this job...
+2026-08-24T05:17:40.5920000Z Job is about to start running on the hosted runner: GitHub Actions 1000000475
+2026-08-24T05:17:40.5910000Z Job is waiting for a hosted runner to come online.
+===== 玄界 _ GPUノードでEnroot check_envを実行/system.txt =====
+2026-08-24T05:24:40.3410000Z Requested labels: self-hosted, genkai
+2026-08-24T05:24:40.3410000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main
+2026-08-24T05:24:40.3410000Z Reusable workflow chain:
+2026-08-24T05:24:40.3410000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:24:40.3410000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:24:40.3410000Z Waiting for a runner to pick up this job...
+2026-08-24T05:24:40.3360000Z Evaluating genkai.if
+2026-08-24T05:24:40.3360000Z Evaluating: (success() && (((((github.event_name == 'push') && contains(github.event.head_commit.message, '[cluster:genkai]'))) || (((github.event_name == 'workflow_dispatch') && inputs.run_genkai)))))
+2026-08-24T05:24:40.3360000Z Expanded: (true && ((('push' == 'push') && contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]')) || ((github.event_name == 'workflow_dispatch') && inputs.run_genkai)))
+2026-08-24T05:24:40.3360000Z Result: true
+2026-08-24T05:24:40.3360000Z Evaluating genkai.run.if
+2026-08-24T05:24:40.3360000Z Evaluating: success()
+2026-08-24T05:24:40.3360000Z Result: true
+2026-08-24T05:24:40.7650000Z Job is about to start running on the runner: genkai0001-3
+===== 玄界 _ ローカルarchiveからSquashFSを配備/system.txt =====
+2026-08-24T05:23:44.4330000Z Requested labels: self-hosted, genkai
+2026-08-24T05:23:44.4330000Z Job defined at: 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main
+2026-08-24T05:23:44.4330000Z Reusable workflow chain:
+2026-08-24T05:23:44.4330000Z 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/qwen.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:44.4330000Z -> 2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/.github/workflows/genkai.yml@refs/heads/main (67f79953c1610a7db516c0e893726d807ee8a912)
+2026-08-24T05:23:44.4330000Z Waiting for a runner to pick up this job...
+2026-08-24T05:23:44.4310000Z Evaluating genkai.if
+2026-08-24T05:23:44.4310000Z Evaluating: (success() && (((((github.event_name == 'push') && contains(github.event.head_commit.message, '[cluster:genkai]'))) || (((github.event_name == 'workflow_dispatch') && inputs.run_genkai)))))
+2026-08-24T05:23:44.4310000Z Expanded: (true && ((('push' == 'push') && contains('[cluster:genkai] [nodes:1] Keep reused SquashFS images inside cluster archives
+
+Use temporary S3 distribution only after a new container build. New builds are downloaded and validated in parallel by Genkai, ASPIRE 2A+, and Firmus before a selected scheduler job can start.
+
+For an existing build, select a validated first-parent run shared by all three archives and create current-run hard links for the SquashFS and sidecar inside each archive. This avoids S3 upload/download and avoids consuming another image worth of archive capacity.
+
+Provision check_env runs from the current local archive entry, leaving AWS credentials and transfers outside the cluster runtime workflows. Add build-download and idempotent hard-link fixtures and update the cost and migration documentation.', '[cluster:genkai]')) || ((github.event_name == 'workflow_dispatch') && inputs.run_genkai)))
+2026-08-24T05:23:44.4310000Z Result: true
+2026-08-24T05:23:44.4310000Z Evaluating genkai.provision.if
+2026-08-24T05:23:44.4310000Z Evaluating: success()
+2026-08-24T05:23:44.4310000Z Result: true
+2026-08-24T05:23:44.9220000Z Job is about to start running on the runner: genkai0002-3
