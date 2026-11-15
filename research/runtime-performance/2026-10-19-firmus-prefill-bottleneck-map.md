@@ -86,7 +86,7 @@ kernel 外の損失：Prefill GPU は電力上限 700 W（仕様上限）で 1.4
 ### 4.8 効かない、または対象外
 
 - NVLS、NCCL symmetric memory、reduce-scatter＋all-gather、micro-batch 通信 overlap：現構成に NCCL all-reduce がない。
-- MegaMoE の stage 増、cluster/multicast：SMEM 不足、kernel に実装なし（[geometry note](2026-10-18-megamoe-geometry-and-redundancy.md)）。
+- MegaMoE の stage 増、cluster/multicast：SMEM 不足、kernel に実装なし（geometry note（当時の資料 `2026-10-18-megamoe-geometry-and-redundancy.md`、現行ツリーには非同梱））。
 - 冗長 expert：静的配置で rank 負荷の max/mean は 1.034 まで均衡済みで、−0.2〜0.3%。
 - dense GEMM：ピークに近い。
 

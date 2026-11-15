@@ -4,6 +4,8 @@
 
 **Classification: Bonus.** This configuration includes source patches and custom kernels. For the unmodified SGLang 0.5.23 Basic and the submission overview, start with [SUBMISSION.md](SUBMISSION.md).
 
+Publication redactions are listed in [PUBLICATION.md](PUBLICATION.md).
+
 ## Results and evidence
 
 | Record | Good output tok/s | Good request fraction | What it establishes |
@@ -78,7 +80,7 @@ sudo env BUILD_DIR=/var/tmp/qwen-submission-build CONTAINER_ARCHIVE_DIR="$PWD/bu
 
 The mirror script shallow-fetches public SGLang `0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb`, whose tree is `9ea4c7300d38bd9e024330b45bf5fc9cbf70f97d`. That tree matches the team mirror boundary `6b3506869d4840b18678de19d18d751a34f9b737`, recreated from the supplied raw commit object. The bundle imports three publication commits and produces HEAD `a60ed3656341ffbc37d5ddd73e7935b65fab08f4`, pinned by the standalone builder. The internal mirror-maintenance workflow was removed from all three commits. The runtime `python/sglang` tree and `python/uv.lock` are byte-identical to recorded source `fc275674a97d78553b22597ee72c8fd48f5420f4`; measurement provenance retains that original source ID. The legacy bundle filename identifies the recorded source from which it was exported. Serving changes remain the separate text patches listed in `patches/README.md`. `BUILD_CACHE_REPOSITORY` is optional.
 
-Build outputs are `build/output/100001.sqsh` and `100001.container-sidecar.json`. The recorded measured image is build **41729881283**, built from Qwen `3f9124fd8afb28e34c71288b6dc31e5c490c7f60`: **12296638464 bytes**, SHA-256 **3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04** (`build/provenance.json`). Every file in `build/source/` is byte-identical to that commit's copy; the one runtime overlay added since (`patches/overlay/sglang/34-pp4-direct-logprob.patch`) is applied at preparation, not in the image. `build/build.log` is that build's raw Buildah log (all 57 steps built without a cache hit). Bit-for-bit reproducibility of a fresh container archive has not been established.
+Build outputs are `build/output/100001.sqsh` and `100001.container-sidecar.json`. The recorded measured image is build **41729881283**, built from Qwen `3f9124fd8afb28e34c71288b6dc31e5c490c7f60`: **12296638464 bytes**, SHA-256 **3a47b757bb88f6bc14ad5f151e8405f645007f25f381f631d88046d9bd1b7b04** (`build/provenance.json`). Every file in `build/source/` is byte-identical to that commit's copy; the one runtime overlay added since (`patches/overlay/sglang/34-pp4-direct-logprob.patch`) is applied at preparation, not in the image. `build/build.log` is that build's Buildah log with its private registry account identifier anonymized (all 57 steps built without a cache hit). Bit-for-bit reproducibility of a fresh container archive has not been established.
 
 The recorded build used a temporary Ubuntu 24.04 EC2 m7i.2xlarge host and the team’s private SGLang mirror. The supplied mirror script reconstructs a public snapshot with identical runtime Python and dependency lock from public sources and the included bundle; the original measured commit remains in the provenance. The original build environment and steps are recorded in `build/build.log` and `build/provenance.json`.
 

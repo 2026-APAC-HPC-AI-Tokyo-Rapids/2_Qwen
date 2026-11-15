@@ -51,7 +51,7 @@ def test_workflow_keeps_build_and_cluster_controls_explicit() -> None:
         assert tag in entry
     assert "startsWith(github.event.head_commit.message, '[require-build]')" in entry
     assert "uses: ./.github/workflows/validate.yml" in entry
-    assert "QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts" in entry
+    assert "QWEN_ARTIFACT_ARCHIVE_ROOT: ${{ secrets.QWEN_ARTIFACT_ARCHIVE_ROOT }}" in entry
     assert "pattern: qwen-*-${{ github.run_id }}-${{ github.run_attempt }}" in entry
     assert "id: artifacts" in entry
     assert entry.count("if: steps.artifacts.outputs.present == 'true'") == 2

@@ -2,7 +2,7 @@
 
 この文書は、OCI / Enroot移行前の正本を履歴として残したものである。現行構成については [OCI / Enroot移行記録](../container-runtime-migration.md) を参照のこと。
 
-ここでいう「現在」は、当時の`main`における [Genkai workflow](../../.github/workflows/genkai.yml)、[build script](../../scripts/build-sglang-sif.sh)、および [SIF recipe](../../containers/sglang.def) を指している。
+ここでいう「現在」は、当時の`main`における [Genkai workflow](../../.github/workflows/genkai.yml)、当時の `build-sglang-sif.sh`（Git履歴）、および 当時の `sglang.def`（Git履歴） を指している。
 
 ## ビルド入力
 

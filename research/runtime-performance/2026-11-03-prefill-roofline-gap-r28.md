@@ -44,7 +44,7 @@ round 24 の `nsys-prefill-0.nsys-rep` を SQLite に展開し、capture の内�
 
 単位は ms／周期です。各欄は個別の中央値なので、単純加算して周期を再構成しません。
 
-設定と周期定義は、[PP4設定](configs/firmus-prefill-pp4.json)、[round 24解析記録](research/runtime-performance/2026-11-02-pp4-profile-r24.md)、[今回の集計結果](削除済みの一時集計)に対応します。
+設定と周期定義は、[PP4設定](../../configs/firmus-prefill-pp4.json)、[round 24解析記録](2026-11-02-pp4-profile-r24.md)、今回の集計結果（当時の一時集計は削除済み）に対応します。
 
 **2. 電力上限下の peak と、床の定義**
 
@@ -134,7 +134,7 @@ MegaMoEの主要bufferは1層あたり、FP8 weight最大2.416 GB、dispatch poo
 
 MegaMoEの効率にはdispatch、epilogue、combineなどの時間も含まれます。**FC1単独・FC2単独の効率をこの比率から逆算することはできません。**
 
-FC1／FC2／dispatch／combineは一つのpersistent kernelに融合されています。round 24のnsysでは内部phaseの実時間が分離されず、round 19の細分計装も通常版を4.4〜4.7倍に遅くしています。したがって、**4区分の個別実測時間・個別効率は未確定**です。[round 19の測定限界](research/runtime-performance/2026-11-01-prefill-megamoe-diag-r19.md)
+FC1／FC2／dispatch／combineは一つのpersistent kernelに融合されています。round 24のnsysでは内部phaseの実時間が分離されず、round 19の細分計装も通常版を4.4〜4.7倍に遅くしています。したがって、**4区分の個別実測時間・個別効率は未確定**です。[round 19の測定限界](2026-11-01-prefill-megamoe-diag-r19.md)
 
 「その他」は、Tensor床よりもmemory・scalar命令の模型が適します。
 
@@ -177,7 +177,7 @@ combineの主要I/Oは約0.589 GB／層で、公称HBM換算では約123 µs／�
 | polling backoff | 到着検知が遅れ、historicalで約1.1〜2.3%悪化 |
 | consumer再設計 | 命令削減が成立しない、またはspill増でCPU段階棄却 |
 
-したがって、**最大対象はMegaMoE全体ですが、最大原因を「dispatch待ち」や「FC1だけ」と確定する証拠はありません。** [consumer解析](research/runtime-performance/2026-11-02-prefill-megamoe-consumer-review.md)、[round 26結果](research/runtime-performance/2026-11-03-prefill-megamoe-swap-tail-r26.md)
+したがって、**最大対象はMegaMoE全体ですが、最大原因を「dispatch待ち」や「FC1だけ」と確定する証拠はありません。** [consumer解析](2026-11-02-prefill-megamoe-consumer-review.md)、[round 26結果](2026-11-03-prefill-megamoe-swap-tail-r26.md)
 
 **FA3：約10.72 msの差**
 
@@ -230,7 +230,7 @@ combineの主要I/Oは約0.589 GB／層で、公称HBM換算では約123 µs／�
 
 後ろ二つは直接計装した時間ではなく、同形状・同runの時間からの模型です。K loopは約1214 cycle／K128で、1024-cycle Tensor床に対して約84%の効率になります。
 
-既存tile調査では、BM192／BN128やBM128／BN192はmainloop内spill、spillなしのBM128／BN144でもL2 loadとtile数が増えました。Oでは代替tileのwave効率も低下します。現在の合法なconfig空間に、明確に有利な選択は見つかっていません。[dense GEMM調査と棄却結果](research/runtime-performance/2026-10-31-prefill-dense-pp4.md)
+既存tile調査では、BM192／BN128やBM128／BN192はmainloop内spill、spillなしのBM128／BN144でもL2 loadとtile数が増えました。Oでは代替tileのwave効率も低下します。現在の合法なconfig空間に、明確に有利な選択は見つかっていません。[dense GEMM調査と棄却結果](2026-10-31-prefill-dense-pp4.md)
 
 **launchの隙間・同期**
 

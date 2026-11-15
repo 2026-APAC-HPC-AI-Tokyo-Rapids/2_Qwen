@@ -20,9 +20,9 @@ c44→c48でgood tok/sは2667.013→2673.508（＋0.24%）、平均TTFTは1297.5
 | B/C：上記の補助 | `--cuda-graph-bs-prefill`に3992/7984等を追加 | 単位は要求数でなくトークン数。要求数制限でこの形状が増えた場合にだけ組み合わせを検討。必要な既存バケットと最大値は残す。現状の大半は8192ちょうどなので単独の優先度は低い。|
 | B/C：小融合 | `--enable-fused-qk-norm-rope` | CUDA BF16 QKV・対応head dimension・非MRotary等を満たすQ/K normとRoPEの既存融合。各層でpositionsをint32へ変換するため、フラグだけでは追加キャストが利得を相殺し得る。FP8 KV cast/storeまで融合するフラグではない。現状は大きいMoE/通信の候補より後。|
 
-NVLSの根拠は固定版 [`engine.py:1502`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/entrypoints/engine.py#L1502)、[`communicator.py:162`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/layers/communicator.py#L162)、`distributed/device_communicators/custom_all_reduce.py:40,260`。実トポロジー・実env・選択アルゴリズムを確認して初めて有効な比較になる。
+NVLSの根拠は固定版 [`engine.py:1502`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/entrypoints/engine.py#L1502)、[`communicator.py:162`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/layers/communicator.py#L162)、`distributed/device_communicators/custom_all_reduce.py:40,260`。実トポロジー・実env・選択アルゴリズムを確認して初めて有効な比較になる。
 
-要求数上限と分割は [`schedule_policy.py:1068`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/managers/schedule_policy.py#L1068) および1195–1242。継続chunkは新規待ち要求より先に追加される。ログは集計値なので「全バッチが2本＋208トークン」とまでは断定しない。
+要求数上限と分割は [`schedule_policy.py:1068`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/managers/schedule_policy.py#L1068) および1195–1242。継続chunkは新規待ち要求より先に追加される。ログは集計値なので「全バッチが2本＋208トークン」とまでは断定しない。
 
 ### 現状では優先しない、または効かない設定
 
@@ -37,9 +37,9 @@ NVLSの根拠は固定版 [`engine.py:1502`](https://github.com/2026-APAC-HPC-AI
 
 ## DeepGEMMへの単純切替を第一候補にしない理由
 
-`--moe-runner-backend deep_gemm`は既存のFP8経路として指定可能で、decodeで遅かったことはprefillでの敗北を証明しない。しかしEP1のstandard dispatcherはprefillでも [`deep_gemm.py:668`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py#L668) から `use_masked_gemm=True` を返す。
+`--moe-runner-backend deep_gemm`は既存のFP8経路として指定可能で、decodeで遅かったことはprefillでの敗北を証明しない。しかしEP1のstandard dispatcherはprefillでも [`deep_gemm.py:668`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/layers/moe/moe_runner/deep_gemm.py#L668) から `use_masked_gemm=True` を返す。
 
-[`ep_moe_kernels.py:1533`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/kernels/ops/moe/ep_moe_kernels.py#L1533) のM容量は `(T//256+1)*256`。T8192/E128/H4096では次の差がある。
+[`ep_moe_kernels.py:1533`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/kernels/ops/moe/ep_moe_kernels.py#L1533) のM容量は `(T//256+1)*256`。T8192/E128/H4096では次の差がある。
 
 | ランク・層当たりの割当容量 | CUTLASS | EP1 masked DeepGEMM |
 |---|---:|---:|
@@ -52,7 +52,7 @@ NVLSの根拠は固定版 [`engine.py:1502`](https://github.com/2026-APAC-HPC-AI
 
 ### 1. 既存H100 expert-specialization GEMMへの接続：最初の小改修
 
-[`layers/quantization/fp8.py:2444`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/layers/quantization/fp8.py#L2444) は `enable_es=(use_mxfp8,use_mxfp8)` を渡すため、今回のH100・通常FP8では両方false。一方、[`cutlass_moe.py:220`](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/layers/moe/cutlass_moe.py#L220) と286にSM90向け `es_fp8_blockwise_scaled_grouped_mm` のup/down分岐が既にある。
+[`layers/quantization/fp8.py:2444`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/layers/quantization/fp8.py#L2444) は `enable_es=(use_mxfp8,use_mxfp8)` を渡すため、今回のH100・通常FP8では両方false。一方、[`cutlass_moe.py:220`](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/layers/moe/cutlass_moe.py#L220) と286にSM90向け `es_fp8_blockwise_scaled_grouped_mm` のup/down分岐が既にある。
 
 変更箇所はこの呼び出し条件。H100・block128・対象shapeに限定して既存ESを使い、モデル・FP8境界・top8・FP32 scale・SiLU融合・combineは保持する。up N768/K4096、down N4096/K384は同梱テストの128アラインメント条件を満たす。新しいGEMMを書く前に検討する価値がある。
 

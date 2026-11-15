@@ -14,11 +14,12 @@ import csv
 import datetime
 import itertools
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
 
-ARCHIVE = Path("/srv/qwen-artifacts")
+ARCHIVE = Path(os.environ.get("QWEN_ARTIFACT_ARCHIVE_ROOT", "/srv/qwen-artifacts"))
 PREFILL = {"g1": range(8), "g4": range(4)}
 
 

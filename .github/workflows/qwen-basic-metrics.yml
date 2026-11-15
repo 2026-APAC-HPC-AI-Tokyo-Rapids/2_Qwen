@@ -7,6 +7,8 @@ on:
         required: true
         type: string
     secrets:
+      QWEN_ARTIFACT_ARCHIVE_ROOT:
+        required: true
       EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON:
         required: true
   workflow_dispatch:
@@ -32,10 +34,12 @@ jobs:
       - name: Publish terminal archived metrics from the login side
         shell: home-lab-shell {0}
         env:
+          QWEN_ARTIFACT_ARCHIVE_ROOT: ${{ secrets.QWEN_ARTIFACT_ARCHIVE_ROOT }}
           MEASUREMENT: ${{ inputs.measurement }}
           EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON: ${{ secrets.EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
+          test -n "${QWEN_ARTIFACT_ARCHIVE_ROOT}"
           credentials=$(mktemp)
           trap 'rm -f -- "${credentials}"' EXIT
           chmod 0600 "${credentials}"
@@ -43,4 +47,4 @@ jobs:
           unset EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON
           export EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_FILE="${credentials}"
           export EXPERIMENT_METRICS_BIGQUERY_CONFIG="$(pwd)/qwen-experiment-metrics/pyproject.toml"
-          uv run --project qwen-experiment-metrics --extra publish python scripts/publish-basic-metrics.py /srv/qwen-artifacts "${MEASUREMENT}"
+          uv run --project qwen-experiment-metrics --extra publish python scripts/publish-basic-metrics.py "${QWEN_ARTIFACT_ARCHIVE_ROOT}" "${MEASUREMENT}"

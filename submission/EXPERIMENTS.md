@@ -2,7 +2,7 @@
 
 **Submitted result: 10054 good output tok/s (measured: 10054.49), Actions 41767886175 / Slurm 28660.** [SUBMISSION.md](SUBMISSION.md) identifies both reproduction entrypoints.
 
-This index follows the numbered pages of `../presentation/Tokyo Rapids with RIKEN Presentation.pptx` (Qwen main slides 38–67). The raw exports, scores, source/configuration and scheduler logs under `experiments/<run>/` were copied without changes after verification against the canonical archive's SHA-256 manifest. Historical PBS scripts missing from those archives were extracted from the recorded Git commit and are identified below. They document the original experiment and require its original preparation and build inputs. Use the current READMEs for the delivered deployment.
+This index retains the Qwen slide numbers from the submitted presentation (main slides 38–67). The presentation is distributed separately. The exports, scores, source/configuration and scheduler logs under `experiments/<run>/` were verified against the canonical archive's SHA-256 manifest before publication. Scheduler owner identifiers have since been anonymized as described in [PUBLICATION.md](PUBLICATION.md); the public checksums cover those edited copies. Historical PBS scripts missing from those archives were extracted from the recorded Git commit and are identified below. They document the original experiment and require its original preparation and build inputs. Use the current READMEs for the delivered deployment.
 
 ## Comparison and validation scope
 

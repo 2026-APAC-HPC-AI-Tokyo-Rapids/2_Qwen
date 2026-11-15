@@ -107,7 +107,7 @@ jobs:
     secrets: inherit
 
   archive-artifacts:
-    name: 成果物を自宅サーバーへ保管
+    name: 成果物を保管
     needs: [serve]
     if: >-
       always() &&
@@ -117,7 +117,7 @@ jobs:
       actions: write
       contents: read
     env:
-      QWEN_ARTIFACT_ARCHIVE_ROOT: /srv/qwen-artifacts
+      QWEN_ARTIFACT_ARCHIVE_ROOT: ${{ secrets.QWEN_ARTIFACT_ARCHIVE_ROOT }}
 
     steps:
       - name: ワークフロー成果物を取得
@@ -131,11 +131,12 @@ jobs:
         shell: bash
         run: if [[ -n "$(find artifacts -type f -print -quit 2>/dev/null)" ]]; then printf 'present=true\n' >>"${GITHUB_OUTPUT}"; else printf 'present=false\n' >>"${GITHUB_OUTPUT}"; fi
 
-      - name: 成果物を自宅サーバーへ配置
+      - name: 成果物を保管先へ配置
         id: archive
         if: steps.artifacts.outputs.present == 'true'
         shell: home-lab-shell {0}
         run: |
+          test -n "${QWEN_ARTIFACT_ARCHIVE_ROOT}"
           destination_parent="${QWEN_ARTIFACT_ARCHIVE_ROOT}/${GITHUB_RUN_ID}"
           destination="${destination_parent}/${GITHUB_RUN_ATTEMPT}"
           test -d artifacts
@@ -151,7 +152,7 @@ jobs:
       - name: 保管先をsummaryに記録
         if: always() && steps.archive.outcome == 'success'
         shell: bash
-        run: printf '### Artifact archive\n\nArchived and checksummed at **archive-host:/srv/qwen-artifacts/%s/%s/**.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
+        run: printf '### Artifact archive\n\nArchived and checksummed measurement **%s/%s** at the configured archive destination.\n' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: 転送済みのGitHub成果物を削除
         if: steps.artifacts.outputs.present == 'true'

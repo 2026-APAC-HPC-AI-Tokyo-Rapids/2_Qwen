@@ -304,7 +304,10 @@ def test_recreated_boundary_commit_has_pinned_object_id():
 
 
 def test_boundary_commit_copy_matches_available_source_mirror():
-    mirror = Path("/home/USER/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src")
+    source_mirror = os.environ.get("SGLANG_SOURCE_MIRROR")
+    if not source_mirror:
+        pytest.skip("set SGLANG_SOURCE_MIRROR to check a local source mirror")
+    mirror = Path(source_mirror)
     if not os.access(mirror, os.R_OK | os.X_OK):
         pytest.skip("fixed source mirror unavailable")
     original = subprocess.check_output(["git", "-C", str(mirror), "cat-file", "commit", "6b350686"])

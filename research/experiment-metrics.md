@@ -4,8 +4,9 @@
 
 Genkai 上で実行される Qwen / SGLang ベンチマークを対象に、再現条件、実効設定、CPU・GPU の資源使用量、推論性能、およびジョブ成否の情報を実行単位（run）で BigQuery へ記録する。
 
+Qwen では、SGLang 内部で動的に解決された実効引数、NVIDIA GPU の実行時テレメトリ、および LLM ベンチマーク特有の性能指標を収集する。
 
-## 継承する契約
+## データ保存と送信の契約
 
 - BigQuery へ送信するデータは、後からの検索・比較が容易な実測値、実効設定、識別子、成否フラグなどのスカラー値を基本とし、成果物（artifact）の本文やその代替となるコンテンツハッシュ自体はメトリクスとして扱わない。
 - 生データテーブル（raw table）は、`run STRING NOT NULL`、`key STRING NOT NULL`、`value STRING NOT NULL` の3列構成に限定する。
@@ -17,6 +18,7 @@ Genkai 上で実行される Qwen / SGLang ベンチマークを対象に、再�
 - コレクター自身は、値同士の妥当性照合、ベースライン比較、合否判定（pass/fail 判定）を行わない。
 - 計算ノードの環境変数は、フィルタリングを行わず全件保存する。
 - BigQuery の認証情報はコレクター起動時に環境変数からメモリ上へ直ちに退避させ、環境変数メトリクスへ混入させない。
+- BigQuery REST API の `tabledata.insertAll` エンドポイント、インメモリバッチ処理、再試行規則、および決定論的な `insertId` 生成ロジックを実装する。
 
 送信先のテーブルは以下を予定する。
 
@@ -88,6 +90,7 @@ GPU のハードウェア静的構成は、ベンチマーク実行前に1回の
 実装フェーズにおいては、少なくとも以下の変更作業が必要となる。
 
 - リポジトリ直下に独立した uv プロジェクト `qwen-experiment-metrics/` を新設
+- 送信モジュール、認証情報ハンドラ、データモデル、PJM アカウンティングリーダーを実装
 - `.github/workflows/genkai.yml` においてコレクター資材をランタイムバンドルへプロビジョニング
 - `GITHUB_RUN_ATTEMPT`、`GITHUB_REPOSITORY`、および GCP 認証情報を PJM スクリプトへ伝播
 - `scripts/run-qwen35.pjm` をコレクターのライフサイクルスーパーバイザーとして機能拡張
@@ -99,7 +102,6 @@ SGLang への計測パッチを SIF イメージへ組み込むコミットで�
 
 ## 調査根拠・参照資料
 
-- 本リポジトリおよび旧 `~/2_Qwen` を作業ディレクトリとする対話ログ
 - [SGLang offline throughput source](https://github.com/sgl-project/sglang/blob/585a7d05e384c79ee17bf3185c7469fe8ce75946/python/sglang/benchmark/offline_throughput.py)
 - [SGLang ServerArgs source](https://github.com/sgl-project/sglang/blob/585a7d05e384c79ee17bf3185c7469fe8ce75946/python/sglang/srt/server_args.py)
 - [SGLang Engine source](https://github.com/sgl-project/sglang/blob/585a7d05e384c79ee17bf3185c7469fe8ce75946/python/sglang/srt/entrypoints/engine.py)

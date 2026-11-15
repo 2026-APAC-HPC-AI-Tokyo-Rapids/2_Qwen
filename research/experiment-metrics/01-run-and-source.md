@@ -8,6 +8,7 @@ GitHub Actions 経由でジョブを投入する標準経路においては、�
 qwen-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT>-<PJM_JOBID>
 ```
 
+手動でジョブを投入する場合は、PJM ジョブ ID と UTC 開始時刻から生成する。
 
 ```text
 qwen-manual-<PJM_JOBID>-<YYYYMMDDTHHMMSSffffffZ>

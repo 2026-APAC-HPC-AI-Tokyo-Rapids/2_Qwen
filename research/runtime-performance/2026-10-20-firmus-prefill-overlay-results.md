@@ -27,7 +27,7 @@ Prefill の kernel（prefill-0、1 回あたり）：MegaMoE 1704（main）→ 1
 ## 次の方向
 
 - MegaMoE FC2 相は NVLink 律速に移った。同一 token の rank 内 expert 出力を FP32 で先に合算して BF16 1 本で送る（remote 転送の約半減）、または combine 送信を FC1 相にも分散する。
-- ping-pong が負けた理由（turn を `wait<0>` 後に渡して pipe が空く、SMEM 帯域 125%）は explore 報告と [ping-pong ノート](2026-10-19-megamoe-prefill-pingpong.md) を参照。
+- ping-pong が負けた理由（turn を `wait<0>` 後に渡して pipe が空く、SMEM 帯域 125%）は explore 報告と ping-pong ノート（当時の資料 `2026-10-19-megamoe-prefill-pingpong.md`、現行ツリーには非同梱） を参照。
 
 ## FC2 interleave（kernel bench [39332619830](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39332619830)、7a179ad）
 

@@ -10,7 +10,7 @@
 
 ## FP32の中間値は無駄とは限らない
 
-固定（ピン留め）されたネイティブの [rope.cuh](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/kernels/jit/csrc/elementwise/rope.cuh#L70) は、BF16の入力を**FP32レジスタ**へキャストし、FP32のコサイン/サインをロードして、x*cos−y*sin および x*sin+y*cos を計算し、BF16へと丸めて戻した後にQ/Kを書き込む。メモリ上にFP32のQ/Kテンソル全体を具現化（materialize）するわけではない。この演算は、長い総和計算ではないにもかかわらず、桁落ち（cancellation）の影響を受ける可能性がある。NVIDIAはその [floating-point guide](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html) において、桁落ち発生時における中間精度とFMAの重要性を説明している。
+固定（ピン留め）されたネイティブの [rope.cuh](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/kernels/jit/csrc/elementwise/rope.cuh#L70) は、BF16の入力を**FP32レジスタ**へキャストし、FP32のコサイン/サインをロードして、x*cos−y*sin および x*sin+y*cos を計算し、BF16へと丸めて戻した後にQ/Kを書き込む。メモリ上にFP32のQ/Kテンソル全体を具現化（materialize）するわけではない。この演算は、長い総和計算ではないにもかかわらず、桁落ち（cancellation）の影響を受ける可能性がある。NVIDIAはその [floating-point guide](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html) において、桁落ち発生時における中間精度とFMAの重要性を説明している。
 
 CPUによる反例では、BF16の x=y=1、角度 π/4+0.001、スケール 1 を用いている。FP32の cos/sin≈0.7063993/0.7078136 であり、これらはいずれもBF16では 0.70703125 に丸められる。高精度な回転成分は −0.0014142133 である。標準的なFP32演算の後にBF16およびFP8へと丸めると −0.001953125 となるが、三角関数の中間値をBF16へ落とすと、最終的なFP8変換後も 0 になってしまう。これは合成された数値的反例であり、測定されたモデル精度の劣化でもGPUでの正当性テストでもない。この例が反証するのは、「FP8出力であれば中間精度は無関係になる」という無条件の主張のみである。
 

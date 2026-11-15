@@ -161,7 +161,8 @@ def test_summary_marks_profile_score_and_handles_missing_results(tmp_path: Path,
     assert "1 / 6 reports" in summary and "2 / 16 GPUs" in summary
     assert "Instrumented score" in summary and "not an official submission" in summary
     assert "Capture continues through benchmark and grace completion." in summary
-    assert "/qwen-artifacts/123/1/" in summary
+    assert "measurement `123/1`" in summary
+    assert "/qwen-artifacts/" not in summary
 
 
 def test_summary_uses_official_score_and_measured_latency(tmp_path: Path) -> None:

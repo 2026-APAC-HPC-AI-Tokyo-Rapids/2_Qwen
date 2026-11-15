@@ -1,56 +1,67 @@
-# Qwen3-235B PD inference on Firmus, Genkai, and ASPIRE 2A+
+# Qwen3 distributed inference
 
-## Final Qwen submissions (2026-11-05)
+This repository contains the Tokyo Rapids with RIKEN Qwen3 competition submission, its SGLang optimizations, and the experiment records for Firmus, Genkai and ASPIRE 2A+.
 
-The source-modified, workload-tuned stack is **Bonus**. The existing [submission package](submission/README.md) reproduces a measured Bonus configuration; its results must not be labelled Basic.
+The target is `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, served with Prefill–Decode separation and evaluated with the official AIPerf workload. Start with the [submission guide](submission/SUBMISSION.md) for configurations, image and model pins, validation scope and reproduction instructions.
 
-**Submitted experimental result: 10054 good output tok/s (measured: 10054.49)**, Actions 41767886175 / Slurm 28660, round 34 on image `3a47b757`. The standalone package check scored 10038.11 and does not replace the submitted result. [Submission guide](submission/SUBMISSION.md) and [presented experiment index](submission/EXPERIMENTS.md) distinguish the two records and link their raw evidence. The organisers' 3 November clarification places source changes in the experimental Bonus path.
+## Recorded results
 
-**Basic** uses the latest public SGLang release when this campaign starts: **0.5.23**, upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`. Its official linux/amd64 image is pinned by digest in `containers/basic.Dockerfile`. SGLang, its kernels, DeepGEMM and the gateway remain unmodified: only built-in options, environment variables and deployment settings are tuned. AIPerf uses a separate Python environment so installing it does not resolve or replace the upstream inference dependencies. Serving uses the gateway binary shipped in the same official image, rather than the older separately published gateway wheel.
+| Configuration | Good output tok/s | Evidence |
+| --- | ---: | --- |
+| Basic: unmodified SGLang 0.5.23, c160 | 6321.12 / 6339.31 | [Basic reproduction and both runs](submission/basic/README.md) |
+| Submitted Bonus: modified SGLang, PP4 Prefill, c232 | **10054.49** | [Submitted run 41767886175](submission/results/41767886175/RESULT.md) |
+| Bonus package verification | 10038.11 | [Standalone run 41781374312](submission/results/41781374312/RESULT.md) |
 
-The selected measured Basic configuration is [configs/firmus-basic.json](configs/firmus-basic.json): Firmus 2 nodes / 16 H200, P3/D1, attention-DP4/EP4, FP8 KV, Nebius EAGLE3 and concurrency **160**, with native `total_requests` routing and snapshot interval 1. Its two official measurements scored **6321.12 / 6339.31 good output tok/s**, mean **6330.21**, with **97.69–97.91%** SLA compliance and zero errors. The otherwise identical c144 control scored 5970.02 / 5961.67; c192 failed the SLA gate at 69.42%. This is the best configuration measured in this campaign, not an exhaustive optimum over every public option. Reproduction is in [submission/basic/README.md](submission/basic/README.md); the [experiment record](research/runtime-performance/2026-10-30-basic-stock-sglang.md) preserves conditions, failures and the Basic/Bonus comparison limits.
+All three entries use two Firmus nodes with 16 H200 GPUs. Basic's two-run mean is **6330.21**. The submitted Bonus result is **1.59×** that mean; the complete configurations differ in code, Prefill parallelism, concurrency and draft precision. The Bonus result is one measurement, and the standalone package check does not replace it.
 
-The [Basic workflow](.github/workflows/qwen-basic.yml) builds on a commit starting with `[require-build] [basic] [cluster:firmus]`; Fresh Basic builds prepare the image without a GPU job; `[build-only]` makes that intention explicit. A following runtime commit pins the successful image SHA/size/source before serving, so a new build cannot silently serve an older pinned image. Runtime-only experiments use `[basic] [cluster:firmus] [nodes:2]` and reuse the build pinned in `configs/firmus-basic.json`. Each condition is a separate commit. The single [Basic Slurm script](submission/basic/submit.sbatch) starts all four workers, the unpatched gateway, connection warm-up and the unchanged official benchmark in one allocation. Worker readback must match the declared release/layout before measuring.
+The score is `goodput.avg × 200`. At least 90% of requests must meet the latency limits. Throughput eligibility and the local numerical/integration checks are separate from the organisers' full-set model accuracy assessment. See the [validation scope](submission/SUBMISSION.md#validation-scope).
 
-For independent reproduction, build `containers/basic.Dockerfile` with `scripts/build-basic-container.sh` on a root Linux host using Buildah chroot, Skopeo, Umoci and SquashFS tools, with `BUILD_DIR`, `CONTAINER_ARCHIVE_DIR`, `GITHUB_WORKSPACE`, the checked-out `GITHUB_SHA`, and positive numeric `GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT`. `BUILD_CACHE_REPOSITORY` is optional; omit it for a build without team registry access. An independent rebuild produces a different artifact identity: copy `configs/firmus-basic.json` and update `container_build_run_id`, `container_source_commit`, `container_sha256` and `container_size_bytes` from its sidecar. Keep the published measured image pins unchanged when reproducing the existing measurement. Then prepare shared storage on Firmus (use the copied config for an independent build):
+## Reproduce a submission
 
-```bash
-bash submission/basic/prepare.sh /scratch/home/ACCOUNT/qwen-basic-run /shared/BUILD.sqsh /scratch/models/Qwen3-235B-A22B-Instruct-2507-FP8 /shared/tokenizer/ac9c66cc9b46af7306746a9250f23d47083d689e configs/firmus-basic.json
-cd /scratch/home/ACCOUNT/qwen-basic-run
-sbatch --export=PATH,HOME,USER,LOGNAME scripts/submit.sbatch
-```
+- **Basic:** follow [submission/basic/README.md](submission/basic/README.md). The official SGLang release, kernels and gateway remain unmodified; deployment settings are tuned.
+- **Bonus:** follow [submission/README.md](submission/README.md). The package includes its build inputs, source reconstruction bundle, runtime overlays, pinned kernel choices, preparation script and Slurm job.
+- **Historical experiments:** [submission/EXPERIMENTS.md](submission/EXPERIMENTS.md) maps the presented experiments to scripts, conditions, metrics and logs. [submission/patches/README.md](submission/patches/README.md) inventories the code changes and their numerical behavior.
 
-The image sidecar must accompany `BUILD.sqsh`. Preparation verifies the unmodified Basic provenance, image SHA/size, official target revision and shards, fixed tokenizer and public BF16 draft. It changes only the draft's loader selector/dtype declaration, as declared in the Bonus package; it does not modify target weights, serving packages or kernels. Retain the shared run directory's `source/`, `logs/` and `results/` as the raw reproduction evidence.
+Preparation runs on a login node before GPU allocation. A scheduler job starts serving, runs the official benchmark and local parser, and leaves logs, results and source provenance in its shared run directory. Adapt site storage paths to the account used for reproduction while preserving the declared model, tokenizer and image identities.
 
+The recorded images were built with Buildah `chroot` isolation, validated with Skopeo and Umoci, and converted to SquashFS for Enroot execution. Image build instructions are included in each submission README. A fresh build may have a different archive hash; use its sidecar integrity fields in a deployment copy of the configuration.
 
-vLLM用イメージは、GitHub Actionsの **AWSでvLLMイメージをビルド** から手動で生成できます。Docker用アーカイブとFirmus用SquashFSを生成し、後者をFirmusへ配布します。実行方法と成果物の場所は [vLLM image build on AWS](research/vllm-container-build.md) を参照してください。
+## Repository layout
 
-公式Qwen競技の `Qwen/Qwen3-235B-A22B-Instruct-2507` FP8 weightsをPrefill–Decode分離（PD分離）構成で評価するリポジトリです。実行エントリポイントは [Qwen workflow](.github/workflows/qwen.yml) です。Firmus、玄界、ASPIRE 2A+のそれぞれに同じ固定revisionの全24モデルシャードと検証済みSquashFSを配置し、各クラスタのSlurm、PJM、PBSジョブ内でモデル検証、SGLang workerとPD routerの起動、公式AIPerf、ローカル結果検証までを連続して実行します。
+| Path | Contents |
+| --- | --- |
+| [submission/](submission/SUBMISSION.md) | Basic and Bonus reproduction packages, measured results and experiment evidence |
+| [patches/](submission/patches/README.md) | SGLang, DeepGEMM and router patches, including rejected research candidates |
+| [kernels/](kernels/probes/README.md) | Custom kernels, numerical checks and microbenchmarks |
+| [configs/](configs/) | Tracked runtime conditions and image identities |
+| [platforms/](platforms/) | Slurm, PJM and PBS execution scripts |
+| [scripts/](scripts/) | Build, provisioning, validation, result collection and analysis helpers |
+| [containers/](containers/) and [aws/](aws/) | Image recipes, dependencies and build infrastructure |
+| [qwen-experiment-metrics/](qwen-experiment-metrics/README.md) | Experiment metrics collection and publication |
+| [research/](research/) | Design decisions, experiment ledgers, profiles and rejected hypotheses |
 
-The ASPIRE candidate ports the Firmus **8366.32 output tok/s** configuration ([39550627795](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39550627795), `fd122bc`) onto ASPIRE's measured **5076.43 output tok/s** baseline ([39098592938](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39098592938)). It retains the H100 P2/D2 topology, TP4/DP4/EP4, concurrency 104, EAGLE3 steps3/draft4, FP8 KV, routing, KV pools, Decode cap 80 and graph buckets through 20. The port uses the source run's exact base image (`652aaeef…`, build 39379223361) and six ordered package overlays: fused Prefill norm/quant, contiguous-KV attention, hot-4 expert replication, FC2 per-128 scales, FC2 staging swizzle and two math warpgroups. Prefill loads 140 physical experts for the unchanged 128 logical experts; Decode keeps its original placement. Request-aligned Prefill chunks, optimistic Prefill and asynchronous Decode admission use the source run's switches.
+Before further kernel work, read the [kernel theory tracker](research/runtime-performance/kernel-theory-tracker.md) and its [input model](research/runtime-performance/kernel-theory-model.json). ASPIRE's H100 results and Firmus's H200 results use different hardware and must be interpreted separately. The [ASPIRE migration record](research/runtime-performance/2026-10-26-aspire-firmus9120-port.json) documents the later 5925.07 / 6081.54 serving observations and their differing selected kernels.
 
-Provisioning verifies the pinned image and host extension, applies the same overlay helper used by Firmus, and archives the patch hashes. Before PBS submission, a CPU Enroot check verifies the actual package mounts, all 94 layers of the replicated expert map, and the prepared draft files. After execution, every DP rank's placement, replica count, scheduler settings and KV capacity are checked. The migration record is [research/runtime-performance/2026-10-22-aspire-firmus8366-port.json](research/runtime-performance/2026-10-22-aspire-firmus8366-port.json). Aspire run [39741427701](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/39741427701) completed the benchmark at **5811.19 output tok/s**, with official workload validation true, 99.33% SLA pass fraction and zero request errors. PBS exited 0. Actions correctly failed its post-run capacity check: replication increased target weights from 60.86 to 65.81 GiB per rank, and the unchanged Prefill memory fraction 0.90 clipped the requested 32768-token pool to 17152 on all eight Prefill ranks. Both Decode pools remained 106496 and passed all checks. The 14.47% higher score than the earlier 5076.43 run is a single observation with a different actual Prefill pool. The subsequent 9120-runtime port and c112 results are recorded below.
+## GitHub Actions and site setup
 
-The current ASPIRE runtime ports the Firmus **9120.51 output tok/s** runtime from run 40225743220 onto the same H100 P2/D2, concurrency-104 shape, using build 40197369083 and its exact ordered overlays. Both roles use asynchronous admission and total-requests routing; Prefill keeps memory fraction 0.90 and explicitly requests 16384 KV tokens, below the earlier profiled 17152 capacity. Eight-GPU Prefill kernel selection and the unchanged four-GPU MegaMoE numeric gate run concurrently across the two nodes before model load; Decode keeps stock selection overrides because the Firmus selectors measure larger batches. The 30-minute PBS limit and post-run capacity guard remain unchanged. Run [40251123706](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40251123706) completed at **5925.07 good output tok/s** with c104 and all capacity guards passing. The later c112 run [40274854588](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/40274854588) reached **6081.54**, eligible with zero errors and PBS exit 0. Its actual Prefill selection was FA3 `control`, while c104 selected `n192`, so the difference cannot be assigned solely to concurrency. Both used BF16 draft; current tracked ASPIRE configuration remains c104. Reaching 6500 requires approximately 6.88% over the best observed c112 result. See the [9120 migration record](research/runtime-performance/2026-10-26-aspire-firmus9120-port.json) and [kernel ledger](research/runtime-performance/kernel-theory-tracker.md) before allocating another comparison.
+The [Qwen workflow](.github/workflows/qwen.yml) controls builds and scheduler jobs. [Basic](.github/workflows/qwen-basic.yml) has its own Firmus path. Site access requires the configured runner labels and custom shells, cluster accounts, shared storage and the AWS repository variables referenced by the workflows. The automated Bonus builder also requires access to its configured SGLang source mirror; the standalone package reconstructs that source from public upstream and the supplied bundle.
 
-Firmus の固定済みBonusパッケージは [submission/README.md](submission/README.md) を参照してください。Bonusは常にその時点の最新構成を採用し、現在はPP4 round 34 で、固定元の測定は Actions run 41767886175 の **10054.49 good output tok/s** です（2×8 H200、並行度232、Prefill 3 worker × TP1/PP4、Decode 1 worker TP4/DP4/EP4、EAGLE3 steps3/draft4、FP8 KV、image 3a47b757）。単一の [submission/run/submit.sbatch](submission/run/submit.sbatch) がワーカー、PD router、readiness確認、1回の接続warm-up、公式60/120/30秒AIPerf、その後の固定greedy出力probeを同じSlurmジョブ内で実行します。ジョブ内のkernel gate（4種）は run 41767886175 で採用された結果を `submission/config/*-kernels.env` に固定して除いています。`submission/run/prepare.sh` が事前に共有run directoryへイメージ、モデル参照、tokenizer、draft、48個（SGLang 34、DeepGEMM 14）のruntime overlayを配備します。以前の9120.51パッケージ（単独再実行9132.03、Actions 40273247322）はGit履歴に残ります。
+Set the repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` to the persistent archive directory visible to the archive runner. It is used by the regular and Basic archive jobs and the CPU-only Basic metrics publisher. Measurement subdirectories are `<Actions run>/<attempt>`. Archive summaries identify the measurement without publishing the server hostname or storage path; using a secret also masks the destination in Actions logs.
 
-ASPIRE・Genkaiで使う既存の汎用ランチャーは [platforms/shared/qwen-pd.sbatch](platforms/shared/qwen-pd.sbatch) へ内容を変えずに移動しました。provisioning後のパスは従来どおり `scripts/submit.sbatch` です。旧Firmusの並行度16/8の結果とprofileはGit履歴に残り、現在の提出証拠は `submission/results/41767886175/` にあります。提出用クライアントと `parse-aiperf-result.py` はリポジトリ正本のコピーであり、後者は主催者のaccuracy checkとは別のローカル検証器です。
+Use [.env.example](.env.example) as a reference for local SSH aliases. Keep actual connection settings in the untracked `.env` and private SSH configuration.
 
-ローカル検証器は `aiperf-command.txt` および `aiperf-provenance.txt` を受け取り、実行コマンドの完全一致、AIPerf 0.12.0、トークナイザリビジョン、並行性、ゲートウェイ、エクスポート各フェーズの所要時間、シード値、キャンセル／エラー状態、およびリクエスト整合性を検証します。設定上の合成ISLは4000ですが、クライアント側で推定14トークンが減算される一方で実際のマーカートークン化が12〜16トークンで変動するため、`first_turn_prefix` により有効な観測長は3984〜3988の範囲に分布します。合格判定には、最小値および最大値が同範囲内にあること、件数が `request_count` と一致すること、合計値が整数であること、平均値が合計／件数と厳密に一致することが常に必須であり、分布の証拠データを欠く結果は棄却されます。なお、生の値は変更されず、ローカル検証結果は `score.json` の `official_validation` に格納されます。[補正値の根拠と判定範囲](research/aiperf-isl-validation.md)を参照してください。
+| Commit message tag | Behavior |
+| --- | --- |
+| `[require-build]` at the start | Build a new image; omit it for runtime-only reuse |
+| `[cluster:genkai]`, `[cluster:aspire2ap]`, `[cluster:firmus]` | Submit to the named clusters; multiple tags run in parallel |
+| No cluster tag | Validate without a scheduler submission |
+| `[nodes:1]`, `[nodes:2]`, `[nodes:4]` | Select the supported node count; default is 2 |
+| `[profile]` | Collect a separate instrumented profile |
+| `[basic] [cluster:firmus]` | Select the Basic workflow |
+| `[skip ci]` at the start | Skip push-triggered Actions |
 
-公式の `AIPerf` 引数では `min_tokens=200`、`max_tokens=200`、`ignore_eos=true` を指定して要求 OSL を `200` とする。検証処理では観測された `min`、`max`、`count`、`sum` を保持する。`AIPerf 0.12.0` の定義では要求 OSL の `5%` または `50` トークンの小さい方を超える絶対差を不一致（mismatch）と判定するため、要求値 `200` に対する許容観測範囲は `190` 以上 `210` 以下（両端含む）となる。検証要件として、`count` が `request_count` と等しいこと、`average` が `sum` / `count` と等しいこと、`sum` が整数であること、および `osl_mismatch_count` が `0` であることを義務付ける。スコア算出は goodput に設定値の `200` を乗じる仕様を維持する。
+Build changes include source, toolchain, dependencies and image contents. Runtime, analysis and documentation changes reuse existing images. Keep each experimental condition in its own traceable commit. The [official protocol record](research/official-qwen3-pd.md), [image build record](research/aws-container-build.md) and [runtime migration record](research/container-runtime-migration.md) explain the execution path.
 
-通常実行では、6基のワーカーログ、ルーターログ、AIPerf の生エクスポート、スコア、スケジューラアカウンティング、ならびにソースコンテナ・モデル・トークナイザの来歴情報（provenance）が収集されます。Prometheus ワーカーのスナップショットは収集されません。プロファイル実行時のみ、各SGLang workerは共通の `scripts/exec-profiler.sh` 実行境界を通り、そのargv証跡とGPU、CPU、NIC、およびInfiniBandの1秒間隔テレメトリが個別のprofileディレクトリに収集されます。全workerのargv証跡が揃わないprofile実行は成功扱いにしません。プロファイル時の測定値は通常ベンチマークの結果と直接比較してはなりません。
+## Publication copies
 
-コンテナは、AWSシンガポールリージョン上に一時起動する`m7i.2xlarge`インスタンスにおいて、Buildahの`chroot` isolationを用いて構築します。生成したOCI layoutをSkopeoおよびUmociで検証した上でSquashFS化し、SGLang mirrorの特定コミット、AIPerf 0.12.0、sglang-router 0.3.2を固定します。各クラスタは自身のローカルアーカイブのみを検索し、クラスタ間でのキャッシュ複製は行いません。ソースコード、ツールチェーン、依存関係を変更したコミットには、メッセージの先頭に`[require-build]`を付与してください。
-
-push契機で計算ジョブを起動する場合は、コミットメッセージに`[cluster:firmus] [nodes:2]`を付与します。新規コンテナビルドを伴うコミットメッセージの例は次の通りです。
-
-```text
-[require-build] [cluster:firmus] [nodes:2] Run official Qwen3 PD baseline
-```
-
-`[cluster:firmus]`と`[cluster:aspire2ap]`は`[nodes:2]`、`[cluster:genkai]`は`[nodes:2]`または`[nodes:4]`でPDベンチマークを起動します。複数のクラスタタグを指定した場合は並行実行します。クラスタタグのないpushでは静的検証のみが実行され、`[skip ci]`を先頭に付けたpushではGitHub Actions自体が起動しません。全クラスタのログ、AIPerf raw export、score、profile、来歴は`qwen-<cluster>-pd-*`のGitHub Actions Artifactとして回収し、その後home-labの`/srv/qwen-artifacts/<run-id>/<attempt>`へSHA-256マニフェスト付きで退避・保管します。
-
-公式仕様、固定コマンド、モデル配置の検証結果、および実装判断の詳細は [公式Qwen3 PD実装記録](research/official-qwen3-pd.md) を参照してください。AWSリソースと認証情報の分離境界については [AWS SquashFSビルド](research/aws-container-build.md)、Enrootへの移行経緯と設計理由は [OCI / Enroot移行記録](research/container-runtime-migration.md) に記録されています。
+Local operational instructions, connection settings and working notes are excluded from Git tracking. [Publication redactions](submission/PUBLICATION.md) identify the changes to logs and private infrastructure identifiers. Performance evidence and fixed build inputs remain available in the submission package.

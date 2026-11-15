@@ -2,7 +2,7 @@
 
 この文書は、OCI / Enroot への移行前に正本として運用されていた構成を履歴として保存したものである。現在の構成については [OCI / Enroot移行記録](../container-runtime-migration.md) を参照する。
 
-ここでいう「現在」は、当時の `main` ブランチにおける [Genkai workflow](../../.github/workflows/genkai.yml) および [PJM script](../../scripts/run-qwen35.pjm) の仕様を指す。
+ここでいう「現在」は、当時の `main` ブランチにおける [Genkai workflow](../../.github/workflows/genkai.yml) および 当時の `run-qwen35.pjm`（Git履歴） の仕様を指す。
 
 ## プロビジョニング
 

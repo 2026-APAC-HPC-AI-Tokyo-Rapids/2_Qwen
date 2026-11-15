@@ -1,5 +1,7 @@
 # Qwen3 PD Basic submission — Firmus, Tokyo Rapids
 
+Publication redactions are listed in [PUBLICATION.md](../PUBLICATION.md).
+
 **Classification: Basic.** This is the submission the organisers re-run. It serves the official FP8 checkpoint with the unmodified public SGLang **0.5.23** release (upstream commit `297e54fd105e974cdf401e5b4d20253a22c16f90`) on Firmus, 2 nodes / 16 H200. Only built-in options, environment variables and deployment settings are tuned. No source or kernel patches or runtime overlays are applied. The team's submitted experimental result is **10054.49 good output tok/s**, documented separately in the [Bonus package](../README.md).
 
 **Selected run to re-run:** Actions [41093781934](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/2_Qwen/tree/public-actions-history-20261115/41093781934), Slurm **27709**, **6339.31 good output tok/s**, good request fraction **0.97912525**, concurrency **160**. Use `basic/prepare.sh` and `basic/submit.sbatch` with `basic/config/firmus-basic.json`.
@@ -42,7 +44,7 @@ sudo env BUILD_DIR=/var/tmp/qwen-basic-build CONTAINER_ARCHIVE_DIR="$PWD/basic/b
 
 `setup.sh` runs `build/source/scripts/build-basic-container.sh` with `build/source/` (byte-identical copies of the team repository's Basic build inputs) as its input directory.
 
-`BUILD_CACHE_REPOSITORY` is optional (a writable OCI registry for Buildah layer caching). Outputs are `100001.sqsh` and `100001.container-sidecar.json`. The measured image is build **41046995676** from Qwen `aa48ceeca33afc27c2995713d55d4a4c65d02fc1`: **16417116160 bytes**, SHA-256 **d6ea5d95d6d76ab87ea55aeb70a052f04dbba8f9bbd515c3ece394690b2a1058**. `build/build.log` is that build's raw Buildah log and `build/provenance.json` its sidecar. Since that commit, `build-basic-container.sh` changed only to make the registry cache optional; the Dockerfile and image check are unchanged. Bit-for-bit reproducibility of a fresh archive has not been established.
+`BUILD_CACHE_REPOSITORY` is optional (a writable OCI registry for Buildah layer caching). Outputs are `100001.sqsh` and `100001.container-sidecar.json`. The measured image is build **41046995676** from Qwen `aa48ceeca33afc27c2995713d55d4a4c65d02fc1`: **16417116160 bytes**, SHA-256 **d6ea5d95d6d76ab87ea55aeb70a052f04dbba8f9bbd515c3ece394690b2a1058**. `build/build.log` is that build's Buildah log with its private registry account identifier anonymized and `build/provenance.json` its sidecar. Since that commit, `build-basic-container.sh` changed only to make the registry cache optional; the Dockerfile and image check are unchanged. Bit-for-bit reproducibility of a fresh archive has not been established.
 
 A new build has a different artifact identity. Copy `config/firmus-basic.json` and set `container_build_run_id`, `container_source_commit`, `container_sha256` and `container_size_bytes` from the new sidecar; keep the published pins unchanged to reproduce the existing measurement.
 

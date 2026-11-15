@@ -44,6 +44,8 @@ The submitted run passed all four kernel-selection checks on their tested shapes
 
 The delivered Basic and Bonus scripts were simplified after the measured runs. The current wrappers isolate build storage, and the jobs distinguish benchmark completion from optional diagnostics. CPU fixtures compare worker launch arguments, environment and the retained serving and benchmark steps with the recorded versions; the final scripts have not been run on GPUs.
 
+Publication edits to identifiers and build logs are documented in [PUBLICATION.md](PUBLICATION.md).
+
 ## Reading the presentation
 
-The shared deck is `../presentation/Tokyo Rapids with RIKEN Presentation.pptx`. Qwen main slides are **38–67**; supporting slides **69–82** contain additional evidence. Slides **96 onward** are explicitly archived drafts. [EXPERIMENTS.md](EXPERIMENTS.md) explains the historical package references in the supporting slides and identifies the current configuration.
+The submitted presentation is distributed separately. Qwen main slides are **38–67**; supporting slides **69–82** contain additional evidence. Slides **96 onward** are explicitly archived drafts. [EXPERIMENTS.md](EXPERIMENTS.md) explains the historical package references in the supporting slides and identifies the current configuration.

@@ -79,7 +79,7 @@ def summarize(root: Path, job_id: str, status: str, cluster: str = "firmus") -> 
         lines += ["", "Nsight: disabled."]
     if config.get("prefill", {}).get("routing_capture_samples", 0):
         lines += ["", f"Prefill source-rank routing diagnostic: **{'valid' if routing.get('valid') else 'missing or invalid'}**; {routing.get('expected_workers', 'unavailable')} workers × {routing.get('expected_ranks', 'unavailable')} ranks × {routing.get('samples_per_rank', 'unavailable')} samples. Raw captures: `results/prefill-routing/`; aggregate: `results/prefill-routing-summary.json`. Routing copies affect the separate profile pass and its Nsight timings; do not use those timings for performance adoption. The score above remains from the normal benchmark pass."]
-    lines += ["", f"Archive after the archive job succeeds: `archive-host:/srv/qwen-artifacts/{run_id}/{attempt}/`.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]
+    lines += ["", f"Archive after the archive job succeeds: measurement `{run_id}/{attempt}` at the configured archive destination.", "Reports: `profile/`; conditions and image hashes: `source/`; raw requests and score: `results/`.", ""]
     return "\n".join(lines)
 
 

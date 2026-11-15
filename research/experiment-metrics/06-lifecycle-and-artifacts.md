@@ -9,6 +9,7 @@ qwen-experiment-metrics/
 qwen-experiment-metrics/.venv/
 ```
 
+リポジトリのチェックアウトからプロジェクトコードをコピーし、`uv sync --frozen --no-dev` を実行して仮想環境を構築する。コレクターコードを変更・修正するたびに SIF イメージを再ビルドする必要はない。
 
 ランナーは GitHub リポジトリのシークレット `EXPERIMENT_METRICS_GOOGLE_CREDENTIALS_JSON` を Base64 エンコードし、以下のパラメータ群とともに PJM スクリプトへ環境変数として引き渡す。
 
@@ -88,3 +89,4 @@ PJM ジョブが終了した後、共有ランタイムディレクトリを削�
 10. scheduler accounting（スケジューラアカウンティング）
 ```
 
+各バッチは、BigQuery への送信成功が確認されるまでプロセス内のメモリ上にのみ保持する。HTTP レスポンスの途絶に伴う再試行によって同一レコードが多重送信されるリスクに対しては、決定論的な `insertId` を付与することで、BigQuery 側でのベストエフォートな重複排除を機能させる。なお、生データテーブル（raw table）以外のビューは本収集基盤では作成しない。

@@ -79,7 +79,10 @@ def test_cuda_integer_only_and_graph_reset():
 
 
 def test_actual_four_patch_chain(tmp_path):
-    mirror = Path('/home/USER/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src')
+    source_mirror = os.environ.get("SGLANG_SOURCE_MIRROR")
+    if not source_mirror:
+        pytest.skip("set SGLANG_SOURCE_MIRROR to check a local source mirror")
+    mirror = Path(source_mirror)
     if not os.access(mirror, os.R_OK | os.X_OK):
         pytest.skip('fixed source mirror unavailable')
     revision = 'fc275674a97d78553b22597ee72c8fd48f5420f4'

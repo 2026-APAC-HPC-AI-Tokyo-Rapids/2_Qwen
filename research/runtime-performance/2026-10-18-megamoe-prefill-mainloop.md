@@ -1,6 +1,6 @@
 # 2026-10-18 Prefill MegaMoE mainloop の再構成（FFMA 形 promote、次 K block の scale 先読み）
 
-精度方針の変更（`task/1. Qwen3 AI Task Rules.md` Q4：浮動小数点の加算順序と FMA 縮約の違いは許容。FP8 未満への精度低下、高精度データの新たな FP8 化、計算の省略は不可）を受けて、[geometry note](2026-10-18-megamoe-geometry-and-redundancy.md) §2.5 で保留していた Prefill MegaMoE の promote を FFMA 形（別 accumulator に積んで `final += s·acc`）に替える案と、mainloop の他の再構成を実装・計測した。対象は Firmus の serving image `39070273796.sqsh`（MegaMoE header sha256 `135a43be…`。v0.1.5 の header に main の `patches/deep-gemm/*.patch` 8 本を `containers/build-sm90-megamoe.py` の順で当てたものと一致）の Prefill geometry（BLOCK 128×256、math 4 warpgroup = 512 thread、3 stage、reuse accumulator、phase 特化）。
+精度方針の変更（`task/1. Qwen3 AI Task Rules.md` Q4：浮動小数点の加算順序と FMA 縮約の違いは許容。FP8 未満への精度低下、高精度データの新たな FP8 化、計算の省略は不可）を受けて、geometry note（当時の資料 `2026-10-18-megamoe-geometry-and-redundancy.md`、現行ツリーには非同梱） §2.5 で保留していた Prefill MegaMoE の promote を FFMA 形（別 accumulator に積んで `final += s·acc`）に替える案と、mainloop の他の再構成を実装・計測した。対象は Firmus の serving image `39070273796.sqsh`（MegaMoE header sha256 `135a43be…`。v0.1.5 の header に main の `patches/deep-gemm/*.patch` 8 本を `containers/build-sm90-megamoe.py` の順で当てたものと一致）の Prefill geometry（BLOCK 128×256、math 4 warpgroup = 512 thread、3 stage、reuse accumulator、phase 特化）。
 
 ## 1. 結論
 

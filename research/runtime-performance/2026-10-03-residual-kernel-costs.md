@@ -32,9 +32,9 @@ targetリプレイあたり、rank0、147回のリプレイで平均したカー
 | KV store |94|0.145033 ms|
 | Query FP8 conversion |94|0.244453 ms|
 
-**KV変換 + 格納（KV conversion + store）は層あたり3カーネルであり、1つにまとめられる可能性がある**。これにより、94層にわたり188個のグラフノードと中間FP8バッファが削減される。影響を受けるカーネルの合計は **0.559589 ms** であるが、変換/格納処理自体は依然として必要であるため、これは予測される削減効果ではない。既存のCUDA fused RoPE/KV-writeパスはBF16 KVを要求し、現在のFP8 KVパスはカバーしていない。スケール処理、丸め、キャッシュインデックス、および無効スロット（invalid-slot）の挙動を維持すること。Queryの変換は別個のものであり、KV変換としてカウントしてはならない。[KV conversion/store](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/mem_cache/memory_pool.py#L2298) を参照。
+**KV変換 + 格納（KV conversion + store）は層あたり3カーネルであり、1つにまとめられる可能性がある**。これにより、94層にわたり188個のグラフノードと中間FP8バッファが削減される。影響を受けるカーネルの合計は **0.559589 ms** であるが、変換/格納処理自体は依然として必要であるため、これは予測される削減効果ではない。既存のCUDA fused RoPE/KV-writeパスはBF16 KVを要求し、現在のFP8 KVパスはカバーしていない。スケール処理、丸め、キャッシュインデックス、および無効スロット（invalid-slot）の挙動を維持すること。Queryの変換は別個のものであり、KV変換としてカウントしてはならない。[KV conversion/store](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/mem_cache/memory_pool.py#L2298) を参照。
 
-QKnorm + RoPEの合計は **0.344810 ms** であるが、単に既存の融合フラグを有効化するだけでは不十分である。[the candidate path](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/models/qwen3_moe.py#L603) は各層でpositionsをint32にキャストしているのに対し、デプロイされたグラフバッファはint64のpositionsを格納している。最大94個追加される位置キャストノードが、削減される94個の算術ノードを相殺する可能性がある。純粋なノード削減を主張する前に、その変換を巻き上げ（hoist）または再利用すること。QおよびKの正規化はすでに融合されている。
+QKnorm + RoPEの合計は **0.344810 ms** であるが、単に既存の融合フラグを有効化するだけでは不十分である。[the candidate path](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/models/qwen3_moe.py#L603) は各層でpositionsをint32にキャストしているのに対し、デプロイされたグラフバッファはint64のpositionsを格納している。最大94個追加される位置キャストノードが、削減される94個の算術ノードを相殺する可能性がある。純粋なノード削減を主張する前に、その変換を巻き上げ（hoist）または再利用すること。QおよびKの正規化はすでに融合されている。
 
 ## MoEのデータ移動とパディングされた処理量
 
@@ -59,7 +59,7 @@ TP4のノード内リダクションとノード間NIXL KV転送は異なるパ�
 
 FlashInferの融合は、block128 FP8活性化出力ではなく、BF16の正規化/残差出力を出力する。さらなる all-reduce + 正規化 + 量子化 の融合には、カスタムH100パスと、ルーター/残差のコンシューマおよび丸めの慎重な維持が必要となる。既存の量子化通信融合はAITERによってゲート（AITER-gated）されており、すぐに利用可能なH100のトグルではない。通常の3992/8192行のprefillは既存の2048トークンの融合上限を超えている。prefillにおけるall-reduce/normの分離はソースで確認された差異であるが、採用されたCUTLASSのprefillトレースでそのコストを定量化したものはない。盲目的にこの上限を引き上げることは正当化されない。
 
-NIXLの [flattened index builder](https://github.com/2026-APAC-HPC-AI-Tokyo-Rapids/5_SGLang_Src/blob/fc275674a97d78553b22597ee72c8fd48f5420f4/python/sglang/srt/disaggregation/nixl/conn.py#L312) は末尾が `.astype(np.int32)` となっている。int32入力の場合、先行する加算によってすでに連続したint32配列が生成されているため、デフォルトの `copy=True` はそれを複製する。CPUのみの候補である `astype(np.int32, copy=False)` は、テストされたint32/int64入力および128/3992/4000/8192トークンインデックスに対して、正確な値、dtype、および入力エイリアスなし（no-input-alias）を維持した。188リージョンを持つ4000トークンにおいて、80回の交互試行による解析ホスト上の中央値は、int32で配列あたり **2.12844 から 0.94790 ms** へと変化した。int64は 1.94258 から 1.94567 ms のままであった。これは記載されたパスにおける冗長なコピーを証明するものであり、ASPIREにおけるTTFTやgoodputの向上を証明するものではない。本番コードは変更されていない。
+NIXLの [flattened index builder](https://github.com/sgl-project/sglang/blob/0d6bef6b6d2f4fa03187fb4d02773ad6e1256adb/python/sglang/srt/disaggregation/nixl/conn.py#L312) は末尾が `.astype(np.int32)` となっている。int32入力の場合、先行する加算によってすでに連続したint32配列が生成されているため、デフォルトの `copy=True` はそれを複製する。CPUのみの候補である `astype(np.int32, copy=False)` は、テストされたint32/int64入力および128/3992/4000/8192トークンインデックスに対して、正確な値、dtype、および入力エイリアスなし（no-input-alias）を維持した。188リージョンを持つ4000トークンにおいて、80回の交互試行による解析ホスト上の中央値は、int32で配列あたり **2.12844 から 0.94790 ms** へと変化した。int64は 1.94258 から 1.94567 ms のままであった。これは記載されたパスにおける冗長なコピーを証明するものであり、ASPIREにおけるTTFTやgoodputの向上を証明するものではない。本番コードは変更されていない。
 
 名目上のtargetのみ・未キャッシュの4000トークンFP8 KVは、draft/キャッシュ再利用/プロトコルを除き、91.797 MiB/ランク、TP4全体でリクエストあたり 367.188 MiB である。各インデックス配列には752000個のint32エントリ（3,008,000バイト）があり、送信元+送信先の配列合計はランクあたり 6,016,000バイト である。これらは752000回の個別のRDMA呼び出しではない。転送キューのカウントやこれらのバイト計算式から、ネットワーク帯域幅のボトルネックは確立されていない。
 

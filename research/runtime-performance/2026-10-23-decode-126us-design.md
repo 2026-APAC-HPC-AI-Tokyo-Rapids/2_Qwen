@@ -89,12 +89,12 @@ token pull完了後のdispatch warpをconsumerに転用できるかを検討す�
 
 さらに大きい案として4 CTA/expertのclusterでFC1中間値をDSMEMに保持する方法もある。64×1536 FP8は96 KiB/expertで4 CTAへ分割できるが、32 expert×4=128 CTAの負荷偏り、local sharedへの再配置、cluster同期が必要。重み604 MBは減らず、主効果は中間値の受渡し。最初の候補にはしない。[HopperのDSMEM・TMA・cluster occupancy仕様](https://docs.nvidia.com/cuda/archive/13.0.3/hopper-tuning-guide/index.html)
 
-## 4. claude-note-20261023.mdとの照合
+## 4. バッチ拡大案の評価
 
-[Claudeのメモ](../../claude-note-20261023.md)はbatch拡大による費用分担を提案している。これは有効な別軸であり、126 µsが未達でもgoodputが上がる可能性がある。ただし次を補正する。
+batch拡大による費用分担は有効な別軸であり、126 µsが未達でもgoodputが上がる可能性がある。ただし次を補正する。
 
 1. **cap132悪化の直接原因にdense GEMMがある。** run 39699383079ではFA3は50.8→50.8 µs、denseは15.8→21.6 µs/call、MegaMoEは199.2→207.0 µs。132行がdenseのBM128を超えたことが大きい。FA3・MegaMoEだけでなく、denseのM192形状も対象にする。[実行記録](2026-10-20-firmus-prefill-overlay-results.md)
-2. **SwapABの144はtile容量でなく検証範囲の上限。** [host patch](../../patches/deep-gemm-host/sm90-swap-ab-144.patch)にも明記されている。現host heuristicは平均64 token/expert以上でgeometryを変更し、192 token/rank・4 rank・top8・128 expertなら平均48。従って192でもM64/2WGの候補に入る。まず同じtileで適用上限を延ばして調べることは可能で、tile変更が必須とはまだ言えない。ただしpool capacity・graph shape・偏ったroutingと複数M tileを検証する。
+2. **SwapABの144はtile容量でなく検証範囲の上限。** 当時のhost patch `sm90-swap-ab-144.patch`（Git履歴）にも明記されている。現host heuristicは平均64 token/expert以上でgeometryを変更し、192 token/rank・4 rank・top8・128 expertなら平均48。従って192でもM64/2WGの候補に入る。まず同じtileで適用上限を延ばして調べることは可能で、tile変更が必須とはまだ言えない。ただしpool capacity・graph shape・偏ったroutingと複数M tileを検証する。
 3. **192でMegaMoE 205 µsは未検証。** 平均expert行数は32→48に増え、N_SWAP、promote、epilogue、転送が増える。重み量がほぼ一定でも時間一定とは限らない。4 token対128 tokenの比較も、active expert数や形状が異なり、192への外挿根拠として弱い。
 4. **FA3 split修正だけで69 µsにはならない。** 既存のsplit固定実験も34–36 requestsで73.8–75.4 µs。現companionは [Python guard](../../patches/sglang/decode-fa3-verify.patch) と [C++ wrapper](../../kernels/fa3-verify/wrapper.cpp) の双方でbatch32–36に制限され、48対応には拡張と数値gateが必要。combineの空split・未初期化partial・LSE sentinel・layoutをまず確認する。現在の [combine](../../kernels/fa3-verify/combine.cu) はweight 0でもpartialを読み掛けるので、NaN partialの扱いを確認すべきだが、それが既存failureの原因とは未確定。
 5. **+15–25%とp99約19 msは予測として未確立。** メモの時間表から `1.5/(376/329)=1.3125` は再計算できる。しかし205/69/40/62 µsの入力値が仮定で、平均ITLの比例計算からp99は確定できない。Prefill queueが空の割合も、そのまま余剰処理能力にはならない。
