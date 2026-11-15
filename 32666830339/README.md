@@ -17,3 +17,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 - [qwen-aspire2ap-check-env-32666830339-2](artifacts/9500525258/)
+
+## Job records
+
+[Original job and step conclusions](jobs.json)

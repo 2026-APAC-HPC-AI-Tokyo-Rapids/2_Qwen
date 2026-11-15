@@ -17,3 +17,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 - [qwen-firmus-container-build-32620606416-2](artifacts/9488516031/)
+
+## Job records
+
+[Original job and step conclusions](jobs.json)

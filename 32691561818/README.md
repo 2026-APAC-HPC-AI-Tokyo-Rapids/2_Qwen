@@ -16,3 +16,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 - [qwen-genkai-check-env-32691561818-1](artifacts/9507954772/)
+
+## Job records
+
+[Original job and step conclusions](jobs.json)
