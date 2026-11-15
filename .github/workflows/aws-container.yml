@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: AWSでQwen SquashFSを準備
 
 on:
@@ -40,8 +41,8 @@ env:
 
 jobs:
   select-genkai:
+    if: ${{ false && (!inputs.firmus_only_build) }}
     name: 玄界のローカル成果物を選択
-    if: ${{ !inputs.firmus_only_build }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     continue-on-error: true
@@ -69,8 +70,8 @@ jobs:
         run: scripts/select-qwen-container.sh
 
   select-aspire2ap:
+    if: ${{ false && (!inputs.firmus_only_build) }}
     name: ASPIRE 2A+のローカル成果物を選択
-    if: ${{ !inputs.firmus_only_build }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
     continue-on-error: true
@@ -98,6 +99,7 @@ jobs:
         run: scripts/select-qwen-container.sh configs/aspire-serving.json
 
   select-firmus:
+    if: ${{ false && (success()) }}
     name: Firmusのローカル成果物を選択
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -126,9 +128,9 @@ jobs:
         run: scripts/select-qwen-container.sh "${{ inputs.firmus_config }}"
 
   stage:
+    if: ${{ false && (!cancelled() && (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build')) }}
     name: Organization管理のSGLang sourceから入力を準備
     needs: [select-genkai, select-aspire2ap, select-firmus]
-    if: ${{ !cancelled() && (needs.select-genkai.outputs.action == 'build' || needs.select-aspire2ap.outputs.action == 'build' || needs.select-firmus.outputs.action == 'build') }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 60
     defaults:
@@ -160,16 +162,16 @@ jobs:
           uvx --from 'boto3>=1.40,<2' python scripts/s3-object-transfer.py upload "${RUNNER_TEMP}/qwen-build-input.tar.zst" "${CONTAINER_BUCKET}" "inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst"
 
   build:
+    if: ${{ false && (!cancelled() && needs.stage.result == 'success') }}
     name: 一時EC2でSquashFSをビルド
     needs: [select-genkai, select-aspire2ap, select-firmus, stage]
-    if: ${{ !cancelled() && needs.stage.result == 'success' }}
     uses: ./.github/workflows/aws-image-build.yml
     secrets: inherit
 
   resolve:
+    if: ${{ false && (!cancelled() && needs.build.result == 'success') }}
     name: S3成果物を確定
     needs: build
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       container_key: ${{ steps.resolve.outputs.container_key }}
@@ -199,9 +201,9 @@ jobs:
           printf 'container_key=%s\ncontainer_sha256=%s\ncontainer_size=%s\nsidecar_key=%s\n' "${container_key}" "${container_sha256}" "${container_size}" "${sidecar_key}" >>"${GITHUB_OUTPUT}"
 
   materialize:
+    if: ${{ false && (always()) }}
     name: ${{ matrix.cluster }}のローカルarchiveへ確定
     needs: [select-genkai, select-aspire2ap, select-firmus, resolve]
-    if: ${{ always() }}
     continue-on-error: true
     strategy:
       fail-fast: false

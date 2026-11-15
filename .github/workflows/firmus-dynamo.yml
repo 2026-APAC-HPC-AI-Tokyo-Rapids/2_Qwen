@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: FirmusでDynamo PDを実行
 on:
   workflow_call:
@@ -10,8 +11,8 @@ env:
   CONTAINER_BUCKET: ${{ vars.QWEN_CONTAINER_BUCKET }}
 jobs:
   stage:
+    if: ${{ false && (startsWith(github.event.head_commit.message, '[require-build]')) }}
     name: 固定したDynamoビルド入力をS3へ保存
-    if: ${{ startsWith(github.event.head_commit.message, '[require-build]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -30,17 +31,17 @@ jobs:
           tar -I 'zstd -3 -T0' -cf "${RUNNER_TEMP}/qwen-build-input.tar.zst" -C "${input_root}" qwen
           aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
   build:
+    if: ${{ false && (startsWith(github.event.head_commit.message, '[require-build]')) }}
     name: 公式Dynamo runtimeを検証してSquashFS化
     needs: stage
-    if: ${{ startsWith(github.event.head_commit.message, '[require-build]') }}
     uses: ./.github/workflows/aws-image-build.yml
     with:
       framework: dynamo
     secrets: inherit
   materialize:
+    if: ${{ false && (always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped')) }}
     name: FirmusへDynamo runtimeを配布
     needs: build
-    if: ${{ always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 120
     defaults:
@@ -75,9 +76,9 @@ jobs:
           sidecar="/scratch/home/ACCOUNT/qwen/dynamo-containers/${GITHUB_RUN_ID}.container-sidecar.json"
           printf 'container_sha256=%s\ncontainer_size=%s\n' "$(jq -er .container_artifact.sha256 "${sidecar}")" "$(jq -er .container_artifact.size_bytes "${sidecar}")" >>"${GITHUB_OUTPUT}"
   run:
+    if: ${{ false && (always() && !cancelled() && needs.materialize.result == 'success') }}
     name: Dynamo frontendとP4 D2を実行
     needs: materialize
-    if: ${{ always() && !cancelled() && needs.materialize.result == 'success' }}
     uses: ./.github/workflows/firmus.yml
     with:
       node_count: '2'

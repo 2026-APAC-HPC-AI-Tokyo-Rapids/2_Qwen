@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: Qwen制御処理の検証
 
 on:
@@ -8,6 +9,7 @@ permissions:
 
 jobs:
   validate:
+    if: ${{ false && (success()) }}
     runs-on: ubuntu-latest
     steps:
       - name: 検証対象を取得
@@ -46,6 +48,7 @@ jobs:
         run: uv run --project qwen-experiment-metrics --with 'numpy>=1.26,<3' pytest -q qwen-experiment-metrics/tests
 
   gigatoken:
+    if: ${{ false && (success()) }}
     name: gigatoken CPU互換性
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -73,6 +76,7 @@ jobs:
         run: printf '### gigatoken CPU compatibility\n\nThe adapter parity check is CPU-only; GPU throughput and EAGLE acceptance are measured by the Genkai job.\n' >>"${GITHUB_STEP_SUMMARY}"
 
   pp4-gate:
+    if: ${{ false && (success()) }}
     name: PP4 pre-allocation CPU gate regression
     runs-on: ubuntu-latest
     timeout-minutes: 10

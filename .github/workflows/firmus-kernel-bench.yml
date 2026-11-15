@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: FirmusでSM90 MegaMoE kernel benchを実行
 
 on:
@@ -20,6 +21,7 @@ defaults:
 
 jobs:
   provision:
+    if: ${{ false && (success()) }}
     name: 固定イメージのDeepGEMM・SGLangと候補overlayを配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -58,6 +60,7 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
+    if: ${{ false && (success()) }}
     name: 1ノード4 GPUで候補ごとのgate・timing・timelineとSGLang JIT比較を実行
     needs: provision
     runs-on: [self-hosted, home-lab]

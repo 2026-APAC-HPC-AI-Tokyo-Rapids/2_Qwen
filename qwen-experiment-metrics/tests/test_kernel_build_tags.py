@@ -22,7 +22,7 @@ def test_ambiguous_or_unbounded_stages_are_rejected(message):
 
 @pytest.mark.parametrize("cluster", ["aspire2ap", "firmus"])
 @pytest.mark.parametrize("stage", ["normal", "build-only", "kernel-bench"])
-def test_actual_push_workflow_routes(cluster, stage):
+def test_archived_workflow_retains_routes_with_execution_disabled(cluster, stage):
     import re
     message = (f"[cluster:{cluster}] [nodes:1] [kernel-bench]" if stage == "kernel-bench" else f"[require-build] [cluster:{cluster}]" + (" [build-only]" if stage == "build-only" else ""))
     module.validate(message)
@@ -37,7 +37,9 @@ def test_actual_push_workflow_routes(cluster, stage):
         expression = re.sub(r"needs.container.outputs.\w+", repr("available"), expression)
         expression = expression.replace("&&", " and ").replace("||", " or ")
         expression = re.sub(r"!(?!=)", " not ", expression)
-        assert eval(expression.strip(), {"__builtins__": {}}, {}) is expected
+        assert eval(expression.strip(), {"__builtins__": {}}, {"false": False}) is False
+        original = expression.split("(", 1)[1].rsplit(")", 1)[0]
+        assert eval(original.strip(), {"__builtins__": {}}, {}) is expected
 
 
 @pytest.mark.parametrize('cluster', ['aspire2ap', 'firmus'])

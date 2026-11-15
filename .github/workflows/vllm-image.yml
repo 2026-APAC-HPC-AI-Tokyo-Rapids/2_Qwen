@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: AWSでvLLMイメージをビルド
 
 on:
@@ -13,9 +14,11 @@ env:
 
 jobs:
   validate:
+    if: ${{ false && (success()) }}
     uses: ./.github/workflows/validate.yml
 
   stage:
+    if: ${{ false && (success()) }}
     name: vLLMのビルド入力をS3へ保存
     needs: validate
     runs-on: ubuntu-latest
@@ -40,6 +43,7 @@ jobs:
           aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
 
   build:
+    if: ${{ false && (success()) }}
     name: AWSでvLLMをビルド
     needs: stage
     uses: ./.github/workflows/aws-image-build.yml
@@ -48,6 +52,7 @@ jobs:
     secrets: inherit
 
   materialize:
+    if: ${{ false && (success()) }}
     name: FirmusへvLLM SquashFSを配布
     needs: build
     runs-on: [self-hosted, home-lab]

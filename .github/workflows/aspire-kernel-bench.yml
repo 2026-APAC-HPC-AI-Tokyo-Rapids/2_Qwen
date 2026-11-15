@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: ASPIREでSM90 MegaMoE kernel benchを実行
 
 on:
@@ -19,6 +20,7 @@ defaults:
 
 jobs:
   bench:
+    if: ${{ false && (success()) }}
     name: H100 EP4でcontrol・数値検証・候補・control再測定を実行
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200

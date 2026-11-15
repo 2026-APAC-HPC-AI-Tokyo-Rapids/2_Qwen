@@ -22,3 +22,7 @@ The cleanup has also been applied throughout the Git branch and tag history. Ori
 ## Issue references
 
 Issue and document navigation links use sanitized commit IDs. Additional historical snapshots referenced by those links are retained under `issue-history/<original-commit-id>` tags after applying the same redactions and updating their public checksum manifests. Author identities, timestamps, merge structure and numerical results are preserved; original source and image IDs recorded as measurement provenance remain unchanged.
+
+## Actions history
+
+Repository Actions remains enabled for access to historical runs and logs. Current workflow YAML has no automatic event triggers and every job is disabled by a literal false gate, while preserving its original condition. File-backed workflows are also disabled individually so old definitions cannot be re-run. Existing runs are retained.

@@ -1,11 +1,38 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_archived_workflows_have_no_automatic_events_or_enabled_jobs() -> None:
+    workflows = sorted((ROOT / ".github/workflows").glob("*.yml"))
+    assert workflows
+    for path in workflows:
+        text = path.read_text()
+        events = re.search(r"^on:\n(.*?)(?=^\S)", text, re.MULTILINE | re.DOTALL)
+        assert events, path
+        names = re.findall(r"^  (\w+):", events[1], re.MULTILINE)
+        assert names and set(names) <= {"workflow_call", "workflow_dispatch"}, path
+        jobs = re.split(r"^  [\w-]+:\n", text.split("\njobs:\n", 1)[1], flags=re.MULTILINE)[1:]
+        assert jobs, path
+        for job in jobs:
+            condition = re.search(r"^    if: \$\{\{ (.+) \}\}$", job, re.MULTILINE)
+            assert condition and condition[1].startswith("false && ("), path
+            # The entire original condition must stay inside the false gate.
+            expression = re.sub(r"'(?:[^']|'')*'", "''", condition[1][9:])
+            depth = 0
+            for index, char in enumerate(expression):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                assert depth > 0 or index == len(expression) - 1, path
+            assert depth == 0, path
 
 
 def test_container_build_contract() -> None:

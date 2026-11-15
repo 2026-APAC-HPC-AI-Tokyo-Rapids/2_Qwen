@@ -1,9 +1,8 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: Qwen Basic (Firmus)
 
 on:
-  push:
-    branches: ["**"]
-    paths-ignore: ["research/**", "**/*.md"]
+  workflow_dispatch:
 
 permissions:
   actions: write
@@ -16,7 +15,7 @@ env:
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[basic]') && contains(github.event.head_commit.message, '[cluster:firmus]') }}
+    if: ${{ false && (github.event_name == 'push' && contains(github.event.head_commit.message, '[basic]') && contains(github.event.head_commit.message, '[cluster:firmus]')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -29,9 +28,9 @@ jobs:
           uv run --project qwen-experiment-metrics pytest -q qwen-experiment-metrics/tests/test_basic_metrics.py qwen-experiment-metrics/tests/test_submission_package.py qwen-experiment-metrics/tests/test_eagle_acceptance.py qwen-experiment-metrics/tests/test_basic_serving.py qwen-experiment-metrics/tests/test_aiperf_official.py qwen-experiment-metrics/tests/test_firmus_reference.py qwen-experiment-metrics/tests/test_firmus_cpu_lifecycle.py qwen-experiment-metrics/tests/test_scheduler_monitor.py qwen-experiment-metrics/tests/test_build_bootstrap.py qwen-experiment-metrics/tests/test_repository_contract.py qwen-experiment-metrics/tests/test_vllm_container.py
 
   stage:
+    if: ${{ false && (startsWith(github.event.head_commit.message, '[require-build]')) }}
     name: Basic SGLangのビルド入力をS3へ保存
     needs: validate
-    if: startsWith(github.event.head_commit.message, '[require-build]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,6 +53,7 @@ jobs:
           aws s3 cp "${RUNNER_TEMP}/qwen-build-input.tar.zst" "s3://${CONTAINER_BUCKET}/inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/qwen-build-input.tar.zst" --only-show-errors
 
   build:
+    if: ${{ false && (success()) }}
     name: AWSでBasic SGLangをビルド
     needs: stage
     uses: ./.github/workflows/aws-image-build.yml
@@ -62,6 +62,7 @@ jobs:
     secrets: inherit
 
   materialize:
+    if: ${{ false && (success()) }}
     name: FirmusへBasic SGLang SquashFSを配布
     needs: build
     runs-on: [self-hosted, home-lab]
@@ -94,9 +95,9 @@ jobs:
           printf 'Firmus image: %s/%s.sqsh\n' "${CONTAINER_ARCHIVE_DIR}" "${GITHUB_RUN_ID}" >>"${GITHUB_STEP_SUMMARY}"
 
   serve:
+    if: ${{ false && (always() && needs.validate.result == 'success' && (needs.materialize.result == 'success' || needs.materialize.result == 'skipped') && !contains(github.event.head_commit.message, '[build-only]') && !startsWith(github.event.head_commit.message, '[require-build]')) }}
     name: Firmus Basic official workload
     needs: [validate, materialize]
-    if: ${{ always() && needs.validate.result == 'success' && (needs.materialize.result == 'success' || needs.materialize.result == 'skipped') && !contains(github.event.head_commit.message, '[build-only]') && !startsWith(github.event.head_commit.message, '[require-build]') }}
     uses: ./.github/workflows/firmus.yml
     with:
       basic: true
@@ -107,11 +108,9 @@ jobs:
     secrets: inherit
 
   archive-artifacts:
+    if: ${{ false && (always() && needs.serve.result != 'skipped') }}
     name: 成果物を保管
     needs: [serve]
-    if: >-
-      always() &&
-      needs.serve.result != 'skipped'
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write
@@ -163,9 +162,9 @@ jobs:
           gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("qwen-") and endswith("-${{ github.run_id }}-${{ github.run_attempt }}")) | .id' | while read -r artifact_id; do gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"; done
 
   publish-metrics:
+    if: ${{ false && (always() && needs.serve.result != 'skipped' && needs.archive-artifacts.result == 'success') }}
     name: ArchiveからBigQueryへ比較用指標を送信
     needs: [serve, archive-artifacts]
-    if: ${{ always() && needs.serve.result != 'skipped' && needs.archive-artifacts.result == 'success' }}
     uses: ./.github/workflows/qwen-basic-metrics.yml
     with:
       measurement: ${{ github.run_id }}/${{ github.run_attempt }}

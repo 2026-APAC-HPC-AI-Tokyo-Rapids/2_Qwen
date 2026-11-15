@@ -45,15 +45,17 @@ Before further kernel work, read the [kernel theory tracker](research/runtime-pe
 
 ## GitHub Actions and site setup
 
-GitHub Actions is currently disabled on the hosted repository. The workflow files document the automated execution path for a configured reproduction environment.
+Repository Actions remains enabled so historical logs are readable. Automatic triggers are removed from the current YAML, and every job has a literal false execution gate. Workflows are also disabled individually to prevent replaying historical definitions. The files retain the original routing conditions for reference.
 
-The [Qwen workflow](.github/workflows/qwen.yml) controls builds and scheduler jobs. [Basic](.github/workflows/qwen-basic.yml) has its own Firmus path. Site access requires the configured runner labels and custom shells, cluster accounts, shared storage and the AWS repository variables referenced by the workflows. The automated Bonus builder also requires access to its configured SGLang source mirror; the standalone package reconstructs that source from public upstream and the supplied bundle.
+The archived [Qwen workflow](.github/workflows/qwen.yml) records the build and scheduler path. [Basic](.github/workflows/qwen-basic.yml) records its separate Firmus path. Site access requires the configured runner labels and custom shells, cluster accounts, shared storage and the AWS repository variables referenced by the workflows. The automated Bonus builder also requires access to its configured SGLang source mirror; the standalone package reconstructs that source from public upstream and the supplied bundle.
 
 Set the repository secret `QWEN_ARTIFACT_ARCHIVE_ROOT` to the persistent archive directory visible to the archive runner. It is used by the regular and Basic archive jobs and the CPU-only Basic metrics publisher. Measurement subdirectories are `<Actions run>/<attempt>`. Archive summaries identify the measurement without publishing the server hostname or storage path; using a secret also masks the destination in Actions logs.
 
 Use [.env.example](.env.example) as a reference for local SSH aliases. Keep actual connection settings in the untracked `.env` and private SSH configuration.
 
-| Commit message tag | Behavior |
+The tags below describe the recorded campaign; execution is disabled in the current archived workflows.
+
+| Commit message tag | Recorded behavior |
 | --- | --- |
 | `[require-build]` at the start | Build a new image; omit it for runtime-only reuse |
 | `[cluster:genkai]`, `[cluster:aspire2ap]`, `[cluster:firmus]` | Submit to the named clusters; multiple tags run in parallel |

@@ -1,3 +1,4 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: ASPIRE 2A+でQwen3 PDを実行
 
 on:
@@ -21,6 +22,7 @@ defaults:
 
 jobs:
   provision:
+    if: ${{ false && (success()) }}
     name: PD実行環境を配備
     runs-on: [self-hosted, home-lab]
     timeout-minutes: 7200
@@ -69,6 +71,7 @@ jobs:
         run: rm -rf -- "${RUNTIME_DIR:?}"
 
   run:
+    if: ${{ false && (success()) }}
     name: 2ノード16 GPUでPDとAIPerfを実行
     needs: provision
     runs-on: [self-hosted, home-lab]

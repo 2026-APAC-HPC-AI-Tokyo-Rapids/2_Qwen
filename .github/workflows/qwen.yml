@@ -1,11 +1,7 @@
+# Execution is archived: jobs are disabled; preserve workflow history and logs.
 name: Qwen
 
 on:
-  push:
-    branches: ["**"]
-    paths-ignore:
-      - "research/**"
-      - "**/*.md"
   workflow_dispatch:
     inputs:
       run_genkai:
@@ -50,14 +46,14 @@ permissions:
 
 jobs:
   validate:
-    if: ${{ !contains(github.event.head_commit.message, '[basic]') || !contains(github.event.head_commit.message, '[cluster:firmus]') }}
+    if: ${{ false && (!contains(github.event.head_commit.message, '[basic]') || !contains(github.event.head_commit.message, '[cluster:firmus]')) }}
     name: 制御処理を検証
     uses: ./.github/workflows/validate.yml
 
   container:
+    if: ${{ false && (!contains(github.event.head_commit.message, '[basic]') && ((github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || (contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) )) }}
     name: AWSでSquashFSを準備
     needs: validate
-    if: ${{ !contains(github.event.head_commit.message, '[basic]') && ((github.event_name == 'push' && (contains(github.event.head_commit.message, '[cluster:genkai]') || (contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')))) || (github.event_name == 'workflow_dispatch' && (inputs.run_genkai || inputs.run_aspire2ap || inputs.run_firmus)) ) }}
     uses: ./.github/workflows/aws-container.yml
     with:
       require_build: ${{ (github.event_name == 'workflow_dispatch' && inputs.require_build) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[require-build]')) }}
@@ -66,9 +62,9 @@ jobs:
     secrets: inherit
 
   genkai:
+    if: ${{ false && (((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai)) && needs.container.outputs.genkai_container_sha256 != '' && needs.container.outputs.genkai_container_size != '') }}
     name: 玄界
     needs: [validate, container]
-    if: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:genkai]')) || (github.event_name == 'workflow_dispatch' && inputs.run_genkai)) && needs.container.outputs.genkai_container_sha256 != '' && needs.container.outputs.genkai_container_size != '' }}
     uses: ./.github/workflows/genkai.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -78,9 +74,9 @@ jobs:
     secrets: inherit
 
   aspire2ap:
+    if: ${{ false && (!contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '') }}
     name: ASPIRE 2A+
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_aspire2ap)) && needs.container.outputs.aspire2ap_container_sha256 != '' && needs.container.outputs.aspire2ap_container_size != '' }}
     uses: ./.github/workflows/aspire2ap.yml
     with:
       node_count: ${{ github.event_name == 'workflow_dispatch' && inputs.node_count || contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
@@ -90,9 +86,9 @@ jobs:
     secrets: inherit
 
   firmus:
+    if: ${{ false && (!contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '') }}
     name: Firmus
     needs: [validate, container]
-    if: ${{ !contains(github.event.head_commit.message, '[build-only]') && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && !contains(github.event.head_commit.message, '[dynamo]') && !contains(github.event.head_commit.message, '[kernel-bench]')) || (github.event_name == 'workflow_dispatch' && inputs.run_firmus)) && needs.container.outputs.firmus_container_sha256 != '' && needs.container.outputs.firmus_container_size != '' }}
     uses: ./.github/workflows/firmus.yml
     with:
       config_path: ${{ contains(github.event.head_commit.message, '[prefill-pp4]') && 'configs/firmus-prefill-pp4.json' || 'configs/firmus-framework.json' }}
@@ -104,36 +100,34 @@ jobs:
     secrets: inherit
 
   firmus-dynamo:
+    if: ${{ false && (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[dynamo]')) }}
     name: Firmus Dynamo
     needs: validate
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[dynamo]') }}
     uses: ./.github/workflows/firmus-dynamo.yml
     secrets: inherit
 
   firmus-kernel-bench:
+    if: ${{ false && (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[kernel-bench]')) }}
     name: Firmus MegaMoE kernel bench
     needs: validate
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:firmus]') && contains(github.event.head_commit.message, '[kernel-bench]') }}
     uses: ./.github/workflows/firmus-kernel-bench.yml
     with:
       node_count: ${{ contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
     secrets: inherit
 
   aspire2ap-kernel-bench:
+    if: ${{ false && (github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && contains(github.event.head_commit.message, '[kernel-bench]')) }}
     name: ASPIRE MegaMoE kernel bench
     needs: validate
-    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[cluster:aspire2ap]') && contains(github.event.head_commit.message, '[kernel-bench]') }}
     uses: ./.github/workflows/aspire-kernel-bench.yml
     with:
       node_count: ${{ contains(github.event.head_commit.message, '[nodes:4]') && '4' || contains(github.event.head_commit.message, '[nodes:1]') && '1' || '2' }}
     secrets: inherit
 
   archive-artifacts:
+    if: ${{ false && (always() && (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-kernel-bench.result != 'skipped' || needs.aspire2ap-kernel-bench.result != 'skipped')) }}
     name: 成果物を保管
     needs: [genkai, aspire2ap, firmus, firmus-dynamo, firmus-kernel-bench, aspire2ap-kernel-bench]
-    if: >-
-      always() &&
-      (needs.genkai.result != 'skipped' || needs.aspire2ap.result != 'skipped' || needs.firmus.result != 'skipped' || needs.firmus-dynamo.result != 'skipped' || needs.firmus-kernel-bench.result != 'skipped' || needs.aspire2ap-kernel-bench.result != 'skipped')
     runs-on: [self-hosted, home-lab]
     permissions:
       actions: write
