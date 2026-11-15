@@ -5,7 +5,7 @@ Created: 2026-07-11T17:31:58Z
 Closed: 2026-07-12T00:29:48Z
 Merged: 2026-07-12T00:29:48Z
 
-The original pull request is retained in a private archive for maintainers. This public copy preserves the sanitized conversation and its original authors and timestamps.
+This public copy preserves the sanitized conversation and its original authors and timestamps. Complete original API records are retained in the private publication backup. GitHub does not permit archiving merged pull requests; the original PR references and cached views require separate handling before publication.
 
 ## Description
 

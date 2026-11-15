@@ -16,3 +16,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 - [firmus-kernel-probe-40171555049-1](artifacts/12590333224/)
+
+## Job records
+
+[Original job and step conclusions](jobs.json)

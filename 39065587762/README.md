@@ -17,3 +17,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 No hosted artifact was available at the publication snapshot.
+
+## Job records
+
+[Original job and step conclusions](jobs.json)

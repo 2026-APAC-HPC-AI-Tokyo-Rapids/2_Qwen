@@ -5,7 +5,7 @@ Created: 2026-07-22T14:26:39Z
 Closed: 2026-07-23T02:36:06Z
 Merged: —
 
-The original pull request is retained in a private archive for maintainers. This public copy preserves the sanitized conversation and its original authors and timestamps.
+This public copy preserves the sanitized conversation and its original authors and timestamps. Complete original API records are retained in the private publication backup. The unmerged original was archived through GitHub for restricted viewing.
 
 ## Description
 

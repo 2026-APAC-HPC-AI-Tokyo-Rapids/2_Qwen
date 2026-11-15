@@ -2,7 +2,7 @@
 
 Sanitized logs and textual artifact evidence retained for publication. The original GitHub run IDs, conclusions, timestamps and measured values are retained. Private paths, site account identifiers, private collaboration links and unrelated-project references are removed. Opaque profiler binaries and model input payloads remain in the private original backup.
 
-[Run index](runs.json) · [Archived pull requests](pull-requests/) · [Issue 7 snapshot](issues/7/)
+[Run index](runs.json) · [Proposed native-run cleanup](cleanup-review.md) · [Archived pull requests](pull-requests/) · [Issue 7 snapshot](issues/7/)
 
 | Run | Created | Workflow | Conclusion |
 | --- | --- | --- | --- |

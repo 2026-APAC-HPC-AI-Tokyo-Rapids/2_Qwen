@@ -16,3 +16,7 @@ Logs are preserved as sanitized text. Server paths, account identifiers and priv
 ## Artifacts
 
 - [qwen-aws-container-build-41046995676-1](artifacts/12975070794/)
+
+## Job records
+
+[Original job and step conclusions](jobs.json)

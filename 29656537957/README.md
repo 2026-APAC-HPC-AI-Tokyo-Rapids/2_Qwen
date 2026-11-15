@@ -16,3 +16,7 @@ No downloadable log was available at the publication snapshot.
 ## Artifacts
 
 No hosted artifact was available at the publication snapshot.
+
+## Job records
+
+[Original job and step conclusions](jobs.json)
