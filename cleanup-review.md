@@ -6,9 +6,9 @@ The earlier 396-run inventory was an intentionally broad screening set, not 396 
 
 The existing sanitized log and artifact archive remains available. Previously removed hosted log ZIPs and artifacts are separate from native workflow-run deletion.
 
-## Other-project metadata to review separately
+## Retained cross-project metadata
 
-4 runs have unrelated-project references in immutable run metadata. They remain undeleted and require a separate decision.
+The four cross-project references in run metadata were reviewed as harmless and retained under the clarified publication policy. No native-run deletion is planned for filesystem paths, archive-host identifiers or these references.
 
 - [35082032992](35082032992/)
 - [34693425543](34693425543/)
@@ -22,14 +22,14 @@ The existing sanitized log and artifact archive remains available. Previously re
 | [29173798867](29173798867/) | expired managed-review log; no confirmed sensitive content |
 | [29656537957](29656537957/) | expired managed-review log; no confirmed sensitive content |
 | [29673113479](29673113479/) | expired managed-review log; no confirmed sensitive content |
-| [30632200430](30632200430/) | unrelated-project reference in run metadata; separate review |
-| [31246043159](31246043159/) | unrelated-project reference in run metadata; separate review |
+| [30632200430](30632200430/) | harmless cross-project metadata; retain |
+| [31246043159](31246043159/) | harmless cross-project metadata; retain |
 | [32454962693](32454962693/) | site account in missing-file path; retain |
 | [32620606416](32620606416/) | host/path screening match; no basis for bulk run deletion |
 | [32666830339](32666830339/) | host/path screening match; no basis for bulk run deletion |
 | [32691561818](32691561818/) | host/path screening match; no basis for bulk run deletion |
-| [34693425543](34693425543/) | unrelated-project reference in run metadata; separate review |
-| [35082032992](35082032992/) | unrelated-project reference in run metadata; separate review |
+| [34693425543](34693425543/) | harmless cross-project metadata; retain |
+| [35082032992](35082032992/) | harmless cross-project metadata; retain |
 | [37628786638](37628786638/) | host/path screening match; no basis for bulk run deletion |
 | [37628908464](37628908464/) | host or filesystem path in summary-producing commands; retain |
 | [37630835533](37630835533/) | host or filesystem path in summary-producing commands; retain |
